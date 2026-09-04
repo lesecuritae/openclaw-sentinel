@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">OpenClaw Sentinel logo</title>
+  <desc id="desc">A shield with data streams converging on a security analysis core</desc>
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#132f63"/><stop offset="1" stop-color="#06152f"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#39e7f2"/><stop offset="1" stop-color="#087af5"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#shield)" stroke="url(#edge)" stroke-width="18"
+        d="M256 28 442 94v139c0 121-73 212-186 251C143 445 70 354 70 233V94z"/>
+  <g fill="none" stroke="#24caef" stroke-width="13" stroke-linecap="round">
+    <path d="M115 158h66l42 55"/><path d="M105 256h94"/><path d="M115 354h66l42-55"/>
+    <path d="M397 158h-66l-42 55"/><path d="M407 256h-94"/><path d="M397 354h-66l-42-55"/>
+  </g>
+  <g fill="#06152f" stroke="#67f4f1" stroke-width="10">
+    <circle cx="105" cy="158" r="17"/><circle cx="95" cy="256" r="17"/>
+    <circle cx="105" cy="354" r="17"/><circle cx="407" cy="158" r="17"/>
+    <circle cx="417" cy="256" r="17"/><circle cx="407" cy="354" r="17"/>
+  </g>
+  <circle cx="256" cy="256" r="91" fill="#081b3c" stroke="#087af5" stroke-width="18"/>
+  <circle cx="256" cy="256" r="58" fill="none" stroke="#39e7f2" stroke-width="13"/>
+  <circle cx="256" cy="256" r="24" fill="#eaffff"/>
+</svg>
