@@ -1,0 +1,6 @@
+allow_below: 60
+challenge_below: 90
+challenge_enabled: false
+block_enabled: true
+challenge_provider: anubis
+block_provider: haproxy

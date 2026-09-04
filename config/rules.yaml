@@ -1,0 +1,21 @@
+rules:
+  high_request_rate:
+    event_types: [request]
+    threshold: 100
+    window: 60
+    score: 20
+  many_error_codes:
+    statuses: [400, 401, 403, 404, 429, 500, 502, 503]
+    threshold: 30
+    window: 60
+    score: 25
+  failed_login:
+    event_types: [failed_login]
+    threshold: 20
+    window: 60
+    score: 30
+  scanner:
+    paths: [/.env, /.git/config, /wp-admin, /phpmyadmin]
+    threshold: 1
+    window: 300
+    score: 50
