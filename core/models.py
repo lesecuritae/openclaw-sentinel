@@ -52,10 +52,18 @@ class Detection(BaseModel):
     reason: str
 
 
+class RiskFactor(BaseModel):
+    source: str
+    score: int = Field(ge=-100, le=100)
+    reason: str
+    kind: str
+
+
 class RiskAssessment(BaseModel):
     ip: str
     risk_score: int = Field(ge=0, le=100)
     reasons: list[str]
+    factors: list[RiskFactor] = Field(default_factory=list)
     action: Action = Action.ALLOW
 
 

@@ -1,3 +1,4 @@
-from intelligence.base import IntelligenceProvider, IntelligenceResult
+from intelligence.base import IntelligenceProvider, IntelligenceResult, ProviderError
+from intelligence.manager import IntelligenceManager
 
-__all__ = ["IntelligenceProvider", "IntelligenceResult"]
+__all__ = ["IntelligenceManager", "IntelligenceProvider", "IntelligenceResult", "ProviderError"]

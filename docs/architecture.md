@@ -10,7 +10,7 @@ sources -> Collector -> EventNormalizer -> SecurityStore
                                            v
                                     DetectionEngine
                                            |
-intelligence providers ------------> RiskEngine
+IntelligenceManager -> TTL cache --> RiskEngine
                                            |
                                       PolicyEngine
                                       /    |     \
@@ -19,7 +19,9 @@ intelligence providers ------------> RiskEngine
                                         Anubis  action provider
 ```
 
-HAProxy currently supplies runtime sessions/statistics and structured request events. Collector,
+HAProxy currently supplies runtime sessions/statistics and structured request events. Threat
+providers are called only for globally routable IPs, concurrently and through a local TTL cache.
+Collector,
 `IntelligenceProvider`, `ActionProvider`, `ChallengeProvider`, `LLMProvider`, and the explicit
 plugin registry form stable extension boundaries. Planned collectors include Nginx, Linux,
 Windows, Docker and cloud sources. Planned intelligence providers include Spamhaus, abuse.ch,

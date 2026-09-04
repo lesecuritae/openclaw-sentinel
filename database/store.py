@@ -17,12 +17,20 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_ip_time ON events(ip, timestamp);
 CREATE TABLE IF NOT EXISTS ip_profile (
   ip TEXT PRIMARY KEY, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
-  risk_score INTEGER NOT NULL, action TEXT NOT NULL, reasons TEXT NOT NULL DEFAULT '[]'
+  risk_score INTEGER NOT NULL, action TEXT NOT NULL, reasons TEXT NOT NULL DEFAULT '[]',
+  factors TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL,
   action TEXT NOT NULL, reason TEXT NOT NULL, provider TEXT NOT NULL, applied INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS threat_intelligence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, source TEXT NOT NULL,
+  result INTEGER NOT NULL, score INTEGER NOT NULL, reason TEXT NOT NULL,
+  attributes TEXT NOT NULL DEFAULT '{}', checked_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS threat_intelligence_expiry
+  ON threat_intelligence(ip, source, expires_at);
 """
 
 
@@ -43,6 +51,8 @@ class SecurityStore:
         profile_columns = {row["name"] for row in db.execute("PRAGMA table_info(ip_profile)")}
         if "reasons" not in profile_columns:
             db.execute("ALTER TABLE ip_profile ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]'")
+        if "factors" not in profile_columns:
+            db.execute("ALTER TABLE ip_profile ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'")
         db.execute("CREATE INDEX IF NOT EXISTS events_ip_path_time ON events(ip,path,timestamp)")
 
     def connect(self) -> sqlite3.Connection:
@@ -123,11 +133,11 @@ class SecurityStore:
         now = datetime.now(UTC).isoformat()
         with self.connect() as db:
             db.execute(
-                """INSERT INTO ip_profile(ip,first_seen,last_seen,risk_score,action,reasons)
-                VALUES (?, ?, ?, ?, ?, ?)
+                """INSERT INTO ip_profile(ip,first_seen,last_seen,risk_score,action,reasons,factors)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET last_seen=excluded.last_seen,
                 risk_score=excluded.risk_score, action=excluded.action,
-                reasons=excluded.reasons""",
+                reasons=excluded.reasons, factors=excluded.factors""",
                 (
                     assessment.ip,
                     now,
@@ -135,6 +145,7 @@ class SecurityStore:
                     assessment.risk_score,
                     assessment.action.value,
                     json.dumps(assessment.reasons),
+                    json.dumps([factor.model_dump(mode="json") for factor in assessment.factors]),
                 ),
             )
 
@@ -145,6 +156,7 @@ class SecurityStore:
             return None
         profile = dict(row)
         profile["reasons"] = json.loads(profile["reasons"])
+        profile["factors"] = json.loads(profile["factors"])
         return profile
 
     def add_action(
@@ -164,3 +176,70 @@ class SecurityStore:
                 (min(max(limit, 1), 1000),),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def action_history(self, ip: str, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM actions WHERE ip=? ORDER BY timestamp DESC LIMIT ?",
+                (ip, min(max(limit, 1), 1000)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_intelligence(self, ip: str, source: str) -> dict | None:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT * FROM threat_intelligence
+                WHERE ip=? AND source=? AND expires_at>?
+                ORDER BY checked_at DESC LIMIT 1""",
+                (ip, source, now),
+            ).fetchone()
+        return self._intelligence(row) if row else None
+
+    def put_intelligence(self, result, checked_at: datetime, expires_at: datetime) -> None:
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO threat_intelligence
+                (ip,source,result,score,reason,attributes,checked_at,expires_at)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    result.ip,
+                    result.source,
+                    int(result.listed),
+                    result.score,
+                    result.reason,
+                    json.dumps(result.attributes, separators=(",", ":")),
+                    checked_at.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+
+    def intelligence_history(self, ip: str, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT * FROM threat_intelligence WHERE ip=?
+                ORDER BY checked_at DESC LIMIT ?""",
+                (ip, min(max(limit, 1), 1000)),
+            ).fetchall()
+        return [self._intelligence(row) for row in rows]
+
+    def threat_sources(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT source, COUNT(*) AS cached_results, MAX(checked_at) AS last_checked
+                FROM threat_intelligence GROUP BY source ORDER BY source"""
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _intelligence(row: sqlite3.Row) -> dict:
+        return {
+            "source": row["source"],
+            "ip": row["ip"],
+            "listed": bool(row["result"]),
+            "score": row["score"],
+            "reason": row["reason"],
+            "attributes": json.loads(row["attributes"]),
+            "checked_at": row["checked_at"],
+            "expires_at": row["expires_at"],
+        }

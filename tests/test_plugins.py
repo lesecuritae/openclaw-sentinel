@@ -16,6 +16,6 @@ def test_plugin_registry_is_explicit_and_rejects_duplicates():
 
 
 def test_intelligence_scores_are_bounded():
-    assert IntelligenceResult(provider="example", score=20).score == 20
+    assert IntelligenceResult(source="example", ip="192.0.2.10", score=20).score == 20
     with pytest.raises(ValueError):
-        IntelligenceResult(provider="example", score=101)
+        IntelligenceResult(source="example", ip="192.0.2.10", score=101)

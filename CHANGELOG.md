@@ -5,10 +5,14 @@ stable release.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-04
+
 ### Added
 
-- Public project governance, security policy, plugin contracts, examples, documentation, CI
-  security checks, and original branding.
+- Modular Spamhaus, abuse.ch, DShield and blocklist.de reputation providers.
+- SQLite-backed threat-intelligence cache with TTL and normalized history.
+- Explainable behavioral and intelligence risk factors plus MCP reputation tools.
+- GeoIP and ASN provider boundaries for future enrichment.
 
 ## [0.1.5] - 2026-09-04
 

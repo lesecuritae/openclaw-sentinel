@@ -145,6 +145,20 @@ It provides MCP initialize, tools/list and tools/call primitives. Production str
 authorization scopes and richer report resources are roadmap work.
 See [LLM and MCP integration](docs/llm-mcp.md) for OpenClaw, OpenWebUI and other clients.
 
+## Threat intelligence
+
+Phase 2 adds optional Spamhaus, abuse.ch ThreatFox, DShield and blocklist.de reputation signals,
+backed by a local SQLite TTL cache. GeoIP and ASN enrichment have provider boundaries but perform
+no lookup yet. Providers normalize evidence; they cannot call policy or action adapters. The Risk
+Engine combines their weighted results with local scanner, request-rate and login evidence while
+retaining every factor and reason. One feed alone is capped below the block threshold.
+
+All external providers are disabled by default. Enable only necessary sources in
+`config/intelligence.yaml`, set `ABUSECH_AUTH_KEY` through the environment when required, and
+review each provider's terms. Sentinel never queries non-global IPs and never forwards raw feed
+records to an LLM. See [Threat intelligence](docs/threat-intelligence.md) for configuration,
+privacy controls, upstream documentation and custom-provider guidance.
+
 ## Security model
 
 Safe defaults matter because Sentinel can sit near enforcement infrastructure. Automatic actions
@@ -181,7 +195,7 @@ build on pushes and pull requests.
 ## Roadmap
 
 - Reliable syslog relay/SPOE adapter and additional Linux, Windows, Docker and Kubernetes sources
-- External threat intelligence and cloud adapters through factor/provider interfaces
+- VPN/Tor signals and production GeoIP/ASN enrichment
 - Production Anubis routing and challenge-result feedback
 - MCP streaming transport, scoped credentials and incident/report resources
 - Audited rule suggestions, optional ML and learning models (never autonomous by default)

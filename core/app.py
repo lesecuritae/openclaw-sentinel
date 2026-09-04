@@ -14,23 +14,26 @@ from database.store import SecurityStore
 from engine.detection import DetectionEngine
 from engine.policy import PolicyEngine
 from engine.risk import RiskEngine
+from intelligence.factory import build_intelligence
 from llm.gateway import LLMGateway
 from mcp.server import SecurityTools
 
 logging.basicConfig(level=logging.INFO)
 settings = Settings()
 store = SecurityStore(settings.database_path)
+intelligence = build_intelligence(settings, store)
 runtime = HAProxyRuntimeClient(settings.haproxy_socket)
 service = SentinelService(
     store,
     DetectionEngine(settings.load_rules()),
-    RiskEngine(),
+    RiskEngine(settings.load_intelligence().single_source_ceiling),
     PolicyEngine(settings.load_policy()),
     HAProxyActionAdapter(runtime, settings.haproxy_blocklist_path, settings.actions_enabled),
     AnubisChallengeAdapter(settings.anubis_url),
+    intelligence,
 )
 llm = LLMGateway.from_settings(settings)
-tools = SecurityTools(service, store, llm)
+tools = SecurityTools(service, store, llm, intelligence)
 
 
 def authenticate(authorization: str | None = Header(default=None)) -> None:
@@ -60,7 +63,7 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="OpenClaw Sentinel", version="0.1.5", lifespan=lifespan)
+app = FastAPI(title="OpenClaw Sentinel", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/health")

@@ -18,16 +18,21 @@ class SentinelService:
         policy: PolicyEngine,
         haproxy: HAProxyActionAdapter,
         anubis: AnubisChallengeAdapter,
+        intelligence=None,
     ):
         self.store, self.detection, self.risk, self.policy = store, detection, risk, policy
         self.haproxy, self.anubis = haproxy, anubis
+        self.intelligence = intelligence
 
     async def process(self, event: SecurityEvent) -> RiskAssessment:
         self.store.add_event(event)
         detections = self.detection.evaluate(
             event, lambda seconds: self.store.recent_events(event.ip, seconds)
         )
-        assessment = self.risk.assess(event.ip, detections)
+        reputation = []
+        if self.intelligence and event.ip != "unknown":
+            reputation = await self.intelligence.check(event.ip)
+        assessment = self.risk.assess(event.ip, detections, reputation)
         self.store.update_event_score(event.event_id, assessment.risk_score)
         assessment.action = self.policy.decide(assessment)
         self.store.update_profile(assessment)

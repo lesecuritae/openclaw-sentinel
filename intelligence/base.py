@@ -2,13 +2,13 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from core.models import SecurityEvent
-
 
 class IntelligenceResult(BaseModel):
-    provider: str
+    source: str
+    ip: str
+    listed: bool = False
     score: int = Field(ge=0, le=100)
-    reasons: list[str] = Field(default_factory=list)
+    reason: str = "not listed"
     attributes: dict[str, str | int | bool | None] = Field(default_factory=dict)
 
 
@@ -17,4 +17,8 @@ class IntelligenceProvider(Protocol):
 
     name: str
 
-    async def lookup(self, event: SecurityEvent) -> IntelligenceResult: ...
+    async def check(self, ip: str) -> IntelligenceResult: ...
+
+
+class ProviderError(RuntimeError):
+    """A provider could not produce a trustworthy reputation result."""

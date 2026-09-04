@@ -1,0 +1,35 @@
+cache_time:
+  default: 24h
+single_source_ceiling: 89
+providers:
+  spamhaus:
+    enabled: false
+    weight: 80
+    ttl: 24h
+    timeout: 5
+  abusech:
+    enabled: false
+    weight: 90
+    ttl: 24h
+    timeout: 5
+    endpoint: https://threatfox-api.abuse.ch/api/v1/
+  dshield:
+    enabled: false
+    weight: 60
+    ttl: 24h
+    timeout: 5
+    endpoint: https://isc.sans.edu/api/ip/{ip}?json
+  blocklist_de:
+    enabled: false
+    weight: 60
+    ttl: 24h
+    timeout: 5
+    endpoint: https://api.blocklist.de/api.php
+  geoip:
+    enabled: false
+    weight: 0
+    ttl: 7d
+  asn:
+    enabled: false
+    weight: 20
+    ttl: 7d
