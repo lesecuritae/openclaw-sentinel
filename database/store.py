@@ -594,6 +594,39 @@ class SecurityStore:
             ).fetchall()
         return [{"ip": row["ip"], "count": row["count"]} for row in rows]
 
+    def source_service_count(self, source: str) -> int:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT COUNT(DISTINCT service) AS count FROM events WHERE source = ?",
+                (source,),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def severity_count_24h(self, severities: tuple[str, ...]) -> int:
+        if not severities:
+            return 0
+        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+        placeholders = ",".join("?" for _ in severities)
+        with self.connect() as db:
+            row = db.execute(
+                f"SELECT COUNT(*) AS count FROM events WHERE timestamp >= ? "
+                f"AND severity IN ({placeholders})",
+                (since, *severities),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def service_health_summary(self, limit: int = 50) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT service, MAX(timestamp) AS last_event,
+                   MAX(score) AS risk_score,
+                   SUM(CASE WHEN severity IN ('high', 'critical') THEN 1 ELSE 0 END) AS warnings
+                   FROM events WHERE service IS NOT NULL AND service != ''
+                   GROUP BY service ORDER BY last_event DESC LIMIT ?""",
+                (min(max(limit, 1), 200),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def devices_for_ip(self, ip: str, limit: int = 20) -> list[dict]:
         with self.connect() as db:
             rows = db.execute(
