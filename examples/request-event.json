@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-01-01T12:00:00Z",
+  "source": "haproxy",
+  "ip": "192.0.2.10",
+  "event_type": "request",
+  "hostname": "app.example.org",
+  "path": "/login",
+  "method": "POST",
+  "service": "application",
+  "user_agent": "example-client/1.0",
+  "severity": "medium",
+  "metadata": {
+    "status": 401,
+    "frontend": "public",
+    "backend": "application"
+  }
+}

@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest a provider-neutral improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Which general use case needs support?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Explain configuration, module boundaries and alternatives.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: This is not a private vulnerability report.
+          required: true
+        - label: The proposal does not require hard-coded infrastructure details.
+          required: true

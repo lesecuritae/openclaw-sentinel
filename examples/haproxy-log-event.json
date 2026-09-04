@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-01-01T12:00:00Z",
+  "ip": "192.0.2.10",
+  "hostname": "app.example.org",
+  "path": "/login",
+  "method": "POST",
+  "status": 401,
+  "frontend": "public",
+  "backend": "application",
+  "service": "application",
+  "user_agent": "example-client/1.0"
+}

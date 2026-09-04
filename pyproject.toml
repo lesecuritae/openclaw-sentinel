@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openclaw-sentinel"
-version = "0.1.0"
+version = "0.1.5"
 description = "Modular security intelligence and response core"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,10 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9", "pytest-asyncio>=0.25,<1", "ruff>=0.9,<1"]
+test = ["pip-audit>=2.9,<3", "pytest>=9.0.3,<10", "pytest-asyncio>=1,<2", "ruff>=0.9,<1"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["core", "collectors", "engine", "actions", "llm", "mcp", "database"]
+packages = ["core", "collectors", "engine", "actions", "intelligence", "llm", "mcp", "database"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

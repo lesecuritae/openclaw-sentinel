@@ -25,11 +25,11 @@ class RuntimeMock:
 
 def test_event_parsing_generates_id_and_utc_timestamp():
     event = EventNormalizer().normalize(
-        {"ip": "1.2.3.4", "service": "vaultwarden", "event_type": "failed_login", "status": 401},
+        {"ip": "192.0.2.10", "service": "application", "event_type": "failed_login", "status": 401},
         source="haproxy",
     )
     assert event.event_id and event.timestamp.tzinfo
-    assert event.ip == "1.2.3.4"
+    assert event.ip == "192.0.2.10"
     assert event.metadata["status"] == 401
 
 
@@ -38,7 +38,7 @@ def test_risk_is_additive_unique_and_capped():
         Detection(rule="login", score=30, reason="login"),
         Detection(rule="scanner", score=80, reason="scanner"),
     ]
-    result = RiskEngine().assess("1.2.3.4", detections)
+    result = RiskEngine().assess("192.0.2.10", detections)
     assert result.risk_score == 100
     assert result.reasons == ["login", "scanner"]
 
@@ -56,7 +56,7 @@ def test_policy(score, challenge, expected):
     policy = PolicyEngine(PolicyConfig(challenge_enabled=challenge))
     from core.models import RiskAssessment
 
-    assert policy.decide(RiskAssessment(ip="1.2.3.4", risk_score=score, reasons=[])) == expected
+    assert policy.decide(RiskAssessment(ip="192.0.2.10", risk_score=score, reasons=[])) == expected
 
 
 @pytest.mark.asyncio
@@ -74,14 +74,14 @@ async def test_simulated_event_blocks_via_runtime(tmp_path: Path):
     )
     event = SecurityEvent(
         source="haproxy",
-        ip="1.2.3.4",
+        ip="192.0.2.10",
         service="web",
         event_type="request",
         path="/.env",
     )
     result = await service.process(event)
     assert result.action == Action.BLOCK
-    assert runtime.commands == ["add acl /acl.lst 1.2.3.4"]
+    assert runtime.commands == ["add acl /acl.lst 192.0.2.10"]
 
 
 @pytest.mark.asyncio

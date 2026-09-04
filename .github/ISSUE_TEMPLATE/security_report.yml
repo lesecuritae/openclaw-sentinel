@@ -1,0 +1,17 @@
+name: Security report guidance
+description: Learn how to report a vulnerability privately
+title: "Do not submit—use private vulnerability reporting"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not disclose vulnerabilities in a public issue.
+        Close this form and use the repository Security tab → “Report a vulnerability”.
+        Full instructions are in SECURITY.md.
+  - type: checkboxes
+    id: acknowledge
+    attributes:
+      label: Private reporting
+      options:
+        - label: I will report this privately and will not submit this public issue.
+          required: true

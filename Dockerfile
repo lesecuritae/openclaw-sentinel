@@ -5,6 +5,7 @@ COPY core ./core
 COPY collectors ./collectors
 COPY engine ./engine
 COPY actions ./actions
+COPY intelligence ./intelligence
 COPY llm ./llm
 COPY mcp ./mcp
 COPY database ./database

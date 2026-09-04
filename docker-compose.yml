@@ -1,12 +1,18 @@
 services:
   sentinel:
     build: .
-    image: openclaw-sentinel:0.1.0
+    image: openclaw-sentinel:0.1.5
     restart: unless-stopped
     environment:
-      DATABASE_PATH: /data/sentinel.db
+      DATABASE_PATH: ${DATABASE_PATH:-/data/sentinel.db}
+      RULES_PATH: ${RULES_PATH:-/app/config/rules.yaml}
+      POLICY_PATH: ${POLICY_PATH:-/app/config/policy.yaml}
       HAPROXY_COLLECTOR_ENABLED: ${HAPROXY_COLLECTOR_ENABLED:-false}
+      HAPROXY_SOCKET: ${HAPROXY_SOCKET:-/run/haproxy/admin.sock}
+      HAPROXY_BLOCKLIST_PATH: ${HAPROXY_BLOCKLIST_PATH:-/etc/haproxy/sentinel-blocklist.lst}
+      COLLECTOR_INTERVAL_SECONDS: ${COLLECTOR_INTERVAL_SECONDS:-5}
       HAPROXY_REQUEST_COLLECTOR_ENABLED: ${HAPROXY_REQUEST_COLLECTOR_ENABLED:-false}
+      HAPROXY_REQUEST_HOST: ${HAPROXY_REQUEST_HOST:-0.0.0.0}
       HAPROXY_REQUEST_PORT: ${HAPROXY_REQUEST_PORT:-1514}
       ACTIONS_ENABLED: ${ACTIONS_ENABLED:-false}
       SENTINEL_API_KEY: ${SENTINEL_API_KEY:-}

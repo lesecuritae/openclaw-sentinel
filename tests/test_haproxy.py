@@ -13,7 +13,7 @@ from engine.risk import RiskEngine
 class Runtime:
     async def command(self, command):
         if command == "show sess":
-            return "0x1: proto=tcp src=1.2.3.4:12345 fe=public be=web\n"
+            return "0x1: proto=tcp src=192.0.2.10:12345 fe=public be=web\n"
         return (
             "# pxname,svname,scur,stot,hrsp_4xx,hrsp_5xx,ereq,econ,eresp\n"
             "web,BACKEND,1,2,0,0,0,0,0\n"
@@ -23,29 +23,29 @@ class Runtime:
 @pytest.mark.asyncio
 async def test_collector_parses_session():
     events = await HAProxyCollector(Runtime()).collect()
-    assert events[0].ip == "1.2.3.4"
+    assert events[0].ip == "192.0.2.10"
     assert events[0].service == "public"
 
 
 @pytest.mark.asyncio
 async def test_action_rejects_command_injection():
     with pytest.raises(ValueError):
-        await HAProxyActionAdapter(Runtime(), "/acl", True).block("1.2.3.4\nshow info")
+        await HAProxyActionAdapter(Runtime(), "/acl", True).block("192.0.2.10\nshow info")
 
 
 def test_structured_request_event_parsing():
     payload = (
-        '<134> sentinel {"ip":"1.2.3.4","host":"vaultwarden.example.com",'
+        '<134> sentinel {"ip":"192.0.2.10","host":"app.example.org",'
         '"path":"/login","method":"post","status":401,"frontend":"https",'
-        '"backend":"vaultwarden","service":"vaultwarden","user_agent":"curl/8",'
+        '"backend":"application","service":"application","user_agent":"example-client/1.0",'
         '"timestamp":"2026-09-04T12:00:00Z"}'
     )
     event = HAProxyStructuredEventDecoder().decode(payload)
-    assert event.hostname == "vaultwarden.example.com"
+    assert event.hostname == "app.example.org"
     assert event.method == "POST"
     assert event.path == "/login"
-    assert event.user_agent == "curl/8"
-    assert event.metadata == {"status": 401, "frontend": "https", "backend": "vaultwarden"}
+    assert event.user_agent == "example-client/1.0"
+    assert event.metadata == {"status": 401, "frontend": "https", "backend": "application"}
 
 
 def test_scanner_pattern_uses_distinct_paths():
@@ -63,7 +63,9 @@ def test_scanner_pattern_uses_distinct_paths():
         )
     )
     events = [
-        SecurityEvent(source="haproxy", ip="1.2.3.4", service="web", event_type="request", path=p)
+        SecurityEvent(
+            source="haproxy", ip="192.0.2.10", service="web", event_type="request", path=p
+        )
         for p in ["/.env", "/wp-admin", "/admin", "/login"]
     ]
     detections = engine.evaluate(events[-1], lambda _window: events)
@@ -82,7 +84,7 @@ def test_login_bruteforce_and_risk_reasons_are_stored(tmp_path):
     events = [
         SecurityEvent(
             source="haproxy",
-            ip="1.2.3.4",
+            ip="192.0.2.10",
             service="web",
             event_type="request",
             path="/login",
@@ -93,9 +95,9 @@ def test_login_bruteforce_and_risk_reasons_are_stored(tmp_path):
     detections = DetectionEngine(RulesConfig(rules={"login_bruteforce": rule})).evaluate(
         events[-1], lambda _window: events
     )
-    assessment = RiskEngine().assess("1.2.3.4", detections)
+    assessment = RiskEngine().assess("192.0.2.10", detections)
     store = SecurityStore(tmp_path / "events.db")
     store.add_event(events[-1])
     store.update_profile(assessment)
     assert store.events()[0].path == "/login"
-    assert store.profile("1.2.3.4")["reasons"] == ["login_bruteforce"]
+    assert store.profile("192.0.2.10")["reasons"] == ["login_bruteforce"]
