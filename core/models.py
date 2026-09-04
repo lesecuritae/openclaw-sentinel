@@ -32,6 +32,10 @@ class SecurityEvent(BaseModel):
     path: str | None = None
     method: str | None = None
     user_agent: str | None = None
+    accept_language: str | None = Field(default=None, max_length=256)
+    client_timezone: str | None = Field(default=None, max_length=128)
+    device_id: str | None = Field(default=None, max_length=256)
+    tls_fingerprint: str | None = Field(default=None, max_length=256)
     hostname: str | None = None
     country: str | None = None
     asn: str | None = None

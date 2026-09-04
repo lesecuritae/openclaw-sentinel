@@ -22,6 +22,16 @@ class EventNormalizer:
             path=str(raw["path"]) if raw.get("path") is not None else None,
             method=str(raw["method"]).upper() if raw.get("method") else None,
             user_agent=str(raw["user_agent"]) if raw.get("user_agent") else None,
+            accept_language=(
+                str(raw["accept_language"]) if raw.get("accept_language") else None
+            ),
+            client_timezone=(
+                str(raw["client_timezone"]) if raw.get("client_timezone") else None
+            ),
+            device_id=str(raw["device_id"]) if raw.get("device_id") else None,
+            tls_fingerprint=(
+                str(raw["tls_fingerprint"]) if raw.get("tls_fingerprint") else None
+            ),
             hostname=str(raw["hostname"] if raw.get("hostname") else raw.get("host") or "") or None,
             country=str(raw["country"]) if raw.get("country") else None,
             asn=str(raw["asn"]) if raw.get("asn") else None,

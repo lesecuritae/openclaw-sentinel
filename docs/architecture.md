@@ -30,3 +30,13 @@ coupling them to detection rules.
 
 LLM and MCP integrations query stored observations and prepare explanations or reports. They are
 not part of the trusted decision path and cannot authorize or execute security actions.
+
+## Phase 3: Adaptive Risk Intelligence
+
+- `engine/behavior`: request/access pattern observation (no autonomous rule changes)
+- `engine/baseline`: service/pattern baselines (observation/recommendation only; safe SQLite migration)
+- `engine/trust`: deterministic 0..100 trust engine (neutral start 50), poisoning protection (blocked/challenged events excluded from positive baseline training)
+- `engine/geo_time`: explainable geo/time mismatch (missing data = no positive finding)
+- `engine/client`: explainable client mismatch (no invented fingerprints when features missing)
+- `core/models`: optional normalized fields (`accept_language`, `client_timezone`, `device_id`, `tls_fingerprint`)
+- Every score change is a persisted, deterministic factor (`source/score/reason/kind`) with no autonomous rule modification.

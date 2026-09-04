@@ -26,3 +26,8 @@ interpolates these settings into the container; `.env` is excluded from Git.
 
 Do not expose an unauthenticated API or UDP listener to an untrusted network. Production secrets
 should come from an external secret manager or a protected environment file, not Compose YAML.
+
+## Phase 3 Configuration Notes
+- `engine/behavior`, `engine/baseline`, `engine/trust`: no autonomous actions; observation/recommendation only.
+- Trust requires 10 safe samples and confidence of at least 0.5 before it can lower risk.
+- No cloud dependencies added; all components run locally with safe SQLite storage.

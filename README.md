@@ -159,6 +159,20 @@ review each provider's terms. Sentinel never queries non-global IPs and never fo
 records to an LLM. See [Threat intelligence](docs/threat-intelligence.md) for configuration,
 privacy controls, upstream documentation and custom-provider guidance.
 
+## Adaptive risk intelligence
+
+Phase 3 adds deterministic request-pattern, geo/time and client-change analysis to the live risk
+path. Safe observations build bounded per-device profiles and service baselines. Profiles start at
+a neutral trust score of 50 and require at least ten consistent, sufficiently confident samples
+before trust can lower risk. Challenged, blocked or otherwise risky requests never build positive
+trust.
+
+Every anomaly is stored with its event, source, score, reason and factor kind. Missing country,
+timezone or client attributes stay neutral; Sentinel does not infer fingerprints or block by
+country. Adaptive components only produce evidence for the Risk Engine and never rewrite rules.
+The MCP interface exposes read-only profile, anomaly and trust inspection tools. See
+[architecture](docs/architecture.md) and [privacy](docs/privacy.md) for details.
+
 ## Security model
 
 Safe defaults matter because Sentinel can sit near enforcement infrastructure. Automatic actions

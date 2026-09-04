@@ -32,7 +32,10 @@ class RiskEngine:
         )
         factors.extend(additional_factors or [])
         score = min(100, max(0, sum(item.score for item in factors)))
-        if len(listed) == 1 and not any(item.kind != "intelligence" for item in factors):
+        corroborating = any(
+            item.kind not in {"intelligence", "trust"} and item.score > 0 for item in factors
+        )
+        if len(listed) == 1 and not corroborating:
             score = min(score, self.single_source_ceiling)
         return RiskAssessment(
             ip=ip, risk_score=score, reasons=[item.reason for item in factors], factors=factors

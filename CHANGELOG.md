@@ -5,6 +5,15 @@ stable release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-04
+
+### Added
+
+- Deterministic behavior, geo/time, client and trust factors in the live risk path.
+- Bounded device profiles and confidence-based service baselines in SQLite.
+- Persisted behavior anomalies and four read-only MCP inspection tools.
+- Explicit poisoning protection: challenged, blocked and risky events never train trust.
+
 ## [0.2.0] - 2026-09-04
 
 ### Added

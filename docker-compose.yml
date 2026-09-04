@@ -1,7 +1,7 @@
 services:
   sentinel:
     build: .
-    image: openclaw-sentinel:0.2.0
+    image: openclaw-sentinel:0.3.0
     restart: unless-stopped
     environment:
       DATABASE_PATH: ${DATABASE_PATH:-/data/sentinel.db}

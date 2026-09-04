@@ -17,19 +17,40 @@ class SecurityTools:
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
             "security.get_ip_history": {"ip": "string"},
+            "security.get_device_profile": {"device_id": "string"},
+            "security.get_behavior_anomalies": {"service": "string", "ip": "string"},
+            "security.get_trust_score": {"device_id": "string"},
+            "security.explain_anomaly": {"anomaly_id": "integer"},
             "security.explain_risk_score": {"ip": "string"},
         }
-        return [
-            {
+        required = {
+            "security.check_ip": ["ip"],
+            "security.get_risk_score": ["ip"],
+            "security.explain_event": ["event_id"],
+            "security.check_ip_reputation": ["ip"],
+            "security.get_ip_history": ["ip"],
+            "security.get_device_profile": ["device_id"],
+            "security.get_trust_score": ["device_id"],
+            "security.explain_anomaly": ["anomaly_id"],
+            "security.explain_risk_score": ["ip"],
+        }
+        definitions = []
+        for name, fields in names.items():
+            schema = {
+                "type": "object",
+                "properties": {key: {"type": kind} for key, kind in fields.items()},
+                "additionalProperties": False,
+            }
+            if name in required:
+                schema["required"] = required[name]
+            definitions.append(
+                {
                 "name": name,
                 "description": name.replace("security.", "").replace("_", " "),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {key: {"type": kind} for key, kind in fields.items()},
-                },
-            }
-            for name, fields in names.items()
-        ]
+                    "inputSchema": schema,
+                }
+            )
+        return definitions
 
     async def call(self, name: str, args: dict) -> Any:
         if name in {"security.check_ip", "security.get_risk_score"}:
@@ -72,6 +93,31 @@ class SecurityTools:
             if not matches:
                 raise KeyError("event not found")
             return {"explanation": await self.service.explain_event(matches[0], self.llm)}
+        if name == "security.get_device_profile":
+            return self.store.get_device_profile(args["device_id"]) or {
+                "device_id": args["device_id"],
+                "trust_score": 50,
+                "known": False,
+            }
+        if name == "security.get_behavior_anomalies":
+            return self.store.behavior_anomalies(
+                service=args.get("service"), ip=args.get("ip")
+            )
+        if name == "security.get_trust_score":
+            from engine.trust.engine import TrustEngine
+
+            profile = self.store.get_device_profile(args["device_id"]) or {}
+            engine = TrustEngine()
+            return {
+                "device_id": args["device_id"],
+                "trust_score": engine.calculate_trust(profile),
+                "explanation": engine.explain_trust(profile),
+            }
+        if name == "security.explain_anomaly":
+            anomaly = self.store.anomaly(args["anomaly_id"])
+            if not anomaly:
+                raise KeyError("anomaly not found")
+            return anomaly
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")
@@ -83,7 +129,7 @@ class SecurityTools:
                 result = {
                     "protocolVersion": "2025-03-26",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.2.0"},
+                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.3.0"},
                 }
             elif method == "tools/list":
                 result = {"tools": self.definitions()}

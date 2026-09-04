@@ -31,6 +31,45 @@ CREATE TABLE IF NOT EXISTS threat_intelligence (
 );
 CREATE INDEX IF NOT EXISTS threat_intelligence_expiry
   ON threat_intelligence(ip, source, expires_at);
+CREATE TABLE IF NOT EXISTS device_profiles (
+  device_id TEXT PRIMARY KEY,
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  known_regions TEXT DEFAULT '[]',
+  typical_hours TEXT DEFAULT '[]',
+  services TEXT DEFAULT '[]',
+  user_agents TEXT DEFAULT '[]',
+  languages TEXT DEFAULT '[]',
+  timezones TEXT DEFAULT '[]',
+  tls_fingerprints TEXT DEFAULT '[]',
+  ip_history TEXT DEFAULT '[]',
+  trust_score INTEGER DEFAULT 50,
+  positive_event_count INTEGER DEFAULT 0,
+  negative_event_count INTEGER DEFAULT 0,
+  blocked_event_count INTEGER DEFAULT 0,
+  positive_confidence REAL DEFAULT 0.0
+);
+CREATE INDEX IF NOT EXISTS device_first_seen ON device_profiles(first_seen);
+CREATE TABLE IF NOT EXISTS behavior_baselines (
+  service TEXT NOT NULL,
+  pattern TEXT NOT NULL,
+  confidence REAL DEFAULT 0.0,
+  sample_count INTEGER DEFAULT 0,
+  first_seen TEXT,
+  last_seen TEXT,
+  recommendation TEXT DEFAULT '',
+  PRIMARY KEY(service, pattern)
+);
+CREATE INDEX IF NOT EXISTS behavior_service ON behavior_baselines(service);
+CREATE TABLE IF NOT EXISTS behavior_anomalies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp TEXT NOT NULL, event_id TEXT NOT NULL, ip TEXT NOT NULL,
+  device_id TEXT, service TEXT NOT NULL, source TEXT NOT NULL,
+  score INTEGER NOT NULL, reason TEXT NOT NULL, kind TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS behavior_anomalies_lookup
+  ON behavior_anomalies(ip, device_id, service, timestamp);
+
 """
 
 
@@ -45,7 +84,18 @@ class SecurityStore:
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
         event_columns = {row["name"] for row in db.execute("PRAGMA table_info(events)")}
-        for name in ("path", "method", "user_agent", "hostname", "country", "asn"):
+        for name in (
+            "path",
+            "method",
+            "user_agent",
+            "hostname",
+            "country",
+            "asn",
+            "accept_language",
+            "client_timezone",
+            "device_id",
+            "tls_fingerprint",
+        ):
             if name not in event_columns:
                 db.execute(f"ALTER TABLE events ADD COLUMN {name} TEXT")
         profile_columns = {row["name"] for row in db.execute("PRAGMA table_info(ip_profile)")}
@@ -53,6 +103,42 @@ class SecurityStore:
             db.execute("ALTER TABLE ip_profile ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]'")
         if "factors" not in profile_columns:
             db.execute("ALTER TABLE ip_profile ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'")
+        device_columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(device_profiles)")
+        }
+        for name in (
+            "user_agents",
+            "languages",
+            "timezones",
+            "tls_fingerprints",
+            "ip_history",
+        ):
+            if name not in device_columns:
+                db.execute(
+                    f"ALTER TABLE device_profiles ADD COLUMN {name} TEXT DEFAULT '[]'"
+                )
+        baseline_pk = [
+            row["name"]
+            for row in db.execute("PRAGMA table_info(behavior_baselines)")
+            if row["pk"]
+        ]
+        if baseline_pk == ["pattern"]:
+            db.executescript(
+                """
+                ALTER TABLE behavior_baselines RENAME TO behavior_baselines_legacy;
+                CREATE TABLE behavior_baselines (
+                  service TEXT NOT NULL, pattern TEXT NOT NULL,
+                  confidence REAL DEFAULT 0.0, sample_count INTEGER DEFAULT 0,
+                  first_seen TEXT, last_seen TEXT, recommendation TEXT DEFAULT '',
+                  PRIMARY KEY(service, pattern)
+                );
+                INSERT OR IGNORE INTO behavior_baselines
+                  SELECT service,pattern,confidence,sample_count,first_seen,last_seen,recommendation
+                  FROM behavior_baselines_legacy;
+                DROP TABLE behavior_baselines_legacy;
+                CREATE INDEX IF NOT EXISTS behavior_service ON behavior_baselines(service);
+                """
+            )
         db.execute("CREATE INDEX IF NOT EXISTS events_ip_path_time ON events(ip,path,timestamp)")
 
     def connect(self) -> sqlite3.Connection:
@@ -65,8 +151,8 @@ class SecurityStore:
             db.execute(
                 """INSERT OR IGNORE INTO events
                 (id,timestamp,source,ip,service,event_type,severity,score,metadata,
-                 path,method,user_agent,hostname,country,asn)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 path,method,user_agent,hostname,country,asn,accept_language,client_timezone,device_id,tls_fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.event_id,
                     event.timestamp.isoformat(),
@@ -83,6 +169,10 @@ class SecurityStore:
                     event.hostname,
                     event.country,
                     event.asn,
+                    event.accept_language,
+                    event.client_timezone,
+                    event.device_id,
+                    event.tls_fingerprint,
                 ),
             )
 
@@ -123,6 +213,10 @@ class SecurityStore:
             path=row["path"],
             method=row["method"],
             user_agent=row["user_agent"],
+            accept_language=row["accept_language"],
+            client_timezone=row["client_timezone"],
+            device_id=row["device_id"],
+            tls_fingerprint=row["tls_fingerprint"],
             hostname=row["hostname"],
             country=row["country"],
             asn=row["asn"],
@@ -243,3 +337,192 @@ class SecurityStore:
             "checked_at": row["checked_at"],
             "expires_at": row["expires_at"],
         }
+
+    def get_device_profile(self, device_id: str | None) -> dict | None:
+        if not device_id:
+            return None
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM device_profiles WHERE device_id=?", (device_id,)
+            ).fetchone()
+        if not row:
+            return None
+        profile = dict(row)
+        for key in self._device_list_fields():
+            try:
+                value = json.loads(profile.get(key) or "[]")
+                profile[key] = value if isinstance(value, list) else []
+            except (TypeError, json.JSONDecodeError):
+                profile[key] = []
+        return profile
+
+    @staticmethod
+    def _device_list_fields() -> tuple[str, ...]:
+        return (
+            "known_regions",
+            "typical_hours",
+            "services",
+            "user_agents",
+            "languages",
+            "timezones",
+            "tls_fingerprints",
+            "ip_history",
+        )
+
+    @staticmethod
+    def _bounded(values: list, limit: int = 32) -> list[str]:
+        return list(dict.fromkeys(str(value) for value in values if value not in (None, "")))[
+            -limit:
+        ]
+
+    def update_device_profile(
+        self,
+        device_id: str,
+        event: SecurityEvent,
+        *,
+        safe: bool,
+        blocked: bool = False,
+    ) -> None:
+        if not device_id:
+            return
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM device_profiles WHERE device_id=?", (device_id,)
+            ).fetchone()
+            current = dict(row) if row else {}
+            values: dict[str, list[str]] = {}
+            for field in self._device_list_fields():
+                try:
+                    decoded = json.loads(current.get(field) or "[]")
+                    values[field] = decoded if isinstance(decoded, list) else []
+                except (TypeError, json.JSONDecodeError):
+                    values[field] = []
+            if safe:
+                additions = {
+                    "known_regions": event.country,
+                    "typical_hours": event.timestamp.hour,
+                    "services": event.service,
+                    "user_agents": event.user_agent,
+                    "languages": event.accept_language,
+                    "timezones": event.client_timezone,
+                    "tls_fingerprints": event.tls_fingerprint,
+                    "ip_history": event.ip,
+                }
+                for field, value in additions.items():
+                    values[field] = self._bounded([*values[field], value])
+            positive = int(current.get("positive_event_count", 0)) + int(safe)
+            negative = int(current.get("negative_event_count", 0)) + int(not safe)
+            blocked_count = int(current.get("blocked_event_count", 0)) + int(blocked)
+            confidence = min(0.99, positive / max(3, positive + negative))
+            trusted_positive = max(0, positive - blocked_count)
+            increase = (
+                min(20, trusted_positive)
+                if trusted_positive >= 10 and confidence >= 0.5
+                else 0
+            )
+            trust_score = max(0, min(100, 50 + increase - min(30, negative * 5)))
+            serialized = [
+                json.dumps(values[field], separators=(",", ":"))
+                for field in self._device_list_fields()
+            ]
+            db.execute(
+                """INSERT INTO device_profiles
+                (device_id,first_seen,last_seen,known_regions,typical_hours,services,user_agents,
+                 languages,timezones,tls_fingerprints,ip_history,trust_score,positive_event_count,
+                 negative_event_count,blocked_event_count,positive_confidence)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(device_id) DO UPDATE SET last_seen=excluded.last_seen,
+                known_regions=excluded.known_regions,typical_hours=excluded.typical_hours,
+                services=excluded.services,user_agents=excluded.user_agents,
+                languages=excluded.languages,timezones=excluded.timezones,
+                tls_fingerprints=excluded.tls_fingerprints,ip_history=excluded.ip_history,
+                trust_score=excluded.trust_score,
+                positive_event_count=excluded.positive_event_count,
+                negative_event_count=excluded.negative_event_count,
+                blocked_event_count=excluded.blocked_event_count,
+                positive_confidence=excluded.positive_confidence""",
+                (
+                    device_id,
+                    current.get("first_seen", now),
+                    now,
+                    *serialized,
+                    trust_score,
+                    positive,
+                    negative,
+                    blocked_count,
+                    confidence,
+                ),
+            )
+
+    def observe_baseline(self, service: str, pattern: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO behavior_baselines
+                (service,pattern,confidence,sample_count,first_seen,last_seen,recommendation)
+                VALUES(?,?,0.05,1,?,?,'observe')
+                ON CONFLICT(service,pattern) DO UPDATE SET
+                sample_count=MIN(10000,behavior_baselines.sample_count+1),
+                confidence=MIN(0.99,behavior_baselines.confidence+0.01),
+                last_seen=excluded.last_seen""",
+                (service, pattern, now, now),
+            )
+
+    def baselines(self, service: str) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM behavior_baselines WHERE service=? ORDER BY confidence DESC",
+                (service,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_anomalies(self, event: SecurityEvent, factors: list) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            db.executemany(
+                """INSERT INTO behavior_anomalies
+                (timestamp,event_id,ip,device_id,service,source,score,reason,kind)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        now,
+                        event.event_id,
+                        event.ip,
+                        event.device_id,
+                        event.service,
+                        factor.source,
+                        factor.score,
+                        factor.reason,
+                        factor.kind,
+                    )
+                    for factor in factors
+                    if factor.score > 0
+                ],
+            )
+
+    def behavior_anomalies(
+        self, *, ip: str | None = None, service: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        clauses, args = [], []
+        if ip:
+            clauses.append("ip=?")
+            args.append(ip)
+        if service:
+            clauses.append("service=?")
+            args.append(service)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        args.append(min(max(limit, 1), 1000))
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT * FROM behavior_anomalies{where} ORDER BY timestamp DESC LIMIT ?",
+                args,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def anomaly(self, anomaly_id: int) -> dict | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM behavior_anomalies WHERE id=?", (anomaly_id,)
+            ).fetchone()
+        return dict(row) if row else None
