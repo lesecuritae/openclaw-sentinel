@@ -14,6 +14,10 @@ class DashboardSummary(StrictModel):
     challenges_24h: int = Field(ge=0)
     top_attackers: list[dict[str, Any]]
     affected_services: list[str]
+    container_count: int = Field(default=0, ge=0)
+    service_health: list[dict[str, Any]] = Field(default_factory=list)
+    warnings_24h: int = Field(default=0, ge=0)
+    last_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Page(StrictModel):
@@ -24,3 +28,8 @@ class Page(StrictModel):
 
 class ConfigUpdate(StrictModel):
     value: dict[str, Any]
+
+
+class WebLogin(StrictModel):
+    api_key: str = Field(min_length=1, max_length=1024)
+    totp_code: str = Field(pattern=r"^\d{6}$")

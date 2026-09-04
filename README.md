@@ -237,3 +237,39 @@ AGPL-3.0 to encourage broad use and integration across self-hosted, proxy and in
 projects while retaining attribution, license notices and an explicit patent grant. Contributions
 are welcome under [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
+## Phase 4.5 — Production Integration Layer
+
+Phase 4.5 adds opt-in Docker events, Linux authentication and service-log collectors behind the
+shared collector contract. File collectors use bounded incremental reads. Authentication parsers
+normalize Linux SSH, Vaultwarden, Nextcloud and Gitea failures without retaining raw log lines.
+The dashboard exposes real container, warning and per-service event aggregates from SQLite.
+
+Docker monitoring requires `DOCKER_COLLECTOR_ENABLED=true` and `DOCKER_API_URL` pointing to a
+separately administered Docker socket proxy. Direct access to the Docker socket is equivalent to
+host-level control and is deliberately not mounted by the supplied Compose file. Restrict the
+proxy to read-only `GET /events` and `GET /containers/{id}/json`; never expose it publicly.
+
+For an isolated integration fixture, run:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+bash tests/simulate-production-events.sh
+docker compose -f docker-compose.test.yml restart testservice
+docker compose -f docker-compose.test.yml down -v
+```
+
+The test stack binds HAProxy only to localhost. It is a traffic fixture, not a production
+deployment. Collector settings and production trust boundaries are documented in
+[Production deployment](docs/deployment.md) and [Phase 4.5](docs/backend/phase45.md).
+
+### Optional dashboard two-factor authentication
+
+Set `WEB_2FA_ENABLED=true`, retain a strong `SENTINEL_API_KEY`, and provide an existing base32
+TOTP secret through `WEB_2FA_SECRET` or preferably a mounted file named by
+`WEB_2FA_SECRET_FILE`. Sentinel never generates or returns this secret. When enabled, the browser
+exchanges the API key and six-digit authenticator code for a short-lived opaque session; the
+session exists only in server and browser memory. Dashboard REST and WebSocket endpoints reject
+the permanent API key directly, while machine-oriented ingest and MCP endpoints remain compatible.
+If the authenticator is lost, an administrator with host access must disable 2FA or replace the
+mounted secret and restart Sentinel. Do not expose the dashboard until enrollment is verified.

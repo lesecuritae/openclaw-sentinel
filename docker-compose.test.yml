@@ -1,0 +1,40 @@
+name: openclaw-sentinel-test
+services:
+  haproxy-test:
+    image: haproxy:2.8
+    container_name: haproxy-test
+    volumes:
+      - ./tests/test-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./tests/test-blocklist.lst:/etc/haproxy/sentinel-blocklist.lst:rw
+    networks:
+      - sentinel-test
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "127.0.0.1:18404:8404"
+  testservice:
+    image: nginx:1.27-alpine
+    container_name: testservice
+    networks:
+      - sentinel-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  loginservice:
+    image: nginx:1.27-alpine
+    container_name: loginservice
+    networks:
+      - sentinel-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+networks:
+  sentinel-test:
+    driver: bridge

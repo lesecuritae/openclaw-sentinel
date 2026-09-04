@@ -4,7 +4,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
-from core.api.v1.schemas import ConfigUpdate, DashboardSummary, Page
+from core.api.v1.schemas import ConfigUpdate, DashboardSummary, Page, WebLogin
 from core.config_manager import UnknownConfigurationError
 
 router = APIRouter(prefix="/api/v1")
@@ -12,15 +12,42 @@ router = APIRouter(prefix="/api/v1")
 
 def authenticate(request: Request) -> None:
     expected = request.app.state.settings.sentinel_api_key
-    if not expected:
-        return
     authorization = request.headers.get("authorization", "")
     supplied = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+    if request.app.state.web_sessions.enabled:
+        if not request.app.state.web_sessions.validate(supplied):
+            raise HTTPException(status_code=401, detail="invalid or expired web session")
+        return
+    if not expected:
+        return
     if not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="invalid API key")
 
 
 secured = [Depends(authenticate)]
+
+
+@router.get("/auth/status")
+def auth_status(request: Request):
+    return {"two_factor_enabled": request.app.state.web_sessions.enabled}
+
+
+@router.post("/auth/session")
+def create_session(request: Request, login: WebLogin):
+    manager = request.app.state.web_sessions
+    if not manager.enabled:
+        raise HTTPException(status_code=404, detail="web 2FA is disabled")
+    client = request.client.host if request.client else "unknown"
+    token = manager.login(client, login.api_key, login.totp_code)
+    if not token:
+        raise HTTPException(status_code=401, detail="invalid credentials or rate limited")
+    return {"token": token, "expires_in": manager.ttl_seconds}
+
+
+@router.post("/auth/logout", dependencies=secured, status_code=204)
+def logout(request: Request):
+    authorization = request.headers.get("authorization", "")
+    request.app.state.web_sessions.logout(authorization.removeprefix("Bearer "))
 
 
 def valid_ip(value: str) -> str:
@@ -41,6 +68,10 @@ def dashboard(request: Request):
         challenges_24h=store.action_count_24h("challenge"),
         top_attackers=store.top_ips(10),
         affected_services=store.services_list(50),
+        container_count=store.source_service_count("docker"),
+        service_health=store.service_health_summary(50),
+        warnings_24h=store.severity_count_24h(("high", "critical")),
+        last_events=store.events_paged(None, 10, 0),
     )
 
 

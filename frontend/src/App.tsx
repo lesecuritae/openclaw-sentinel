@@ -30,11 +30,11 @@ const navItems = [
 ];
 
 export default function App() {
-  const { token, setToken, clearToken } = useAuth();
+  const { token, twoFactorEnabled, login, clearToken } = useAuth();
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   if (!token) {
-    return <Login onLogin={setToken} />;
+    return <Login onLogin={login} twoFactorEnabled={twoFactorEnabled} />;
   }
 
   return (
@@ -72,7 +72,7 @@ export default function App() {
           ))}
         </nav>
         <div className="p-4 border-t border-slate-800">
-          <div className="text-xs text-slate-500">v0.4.0 · Secure mode</div>
+          <div className="text-xs text-slate-500">v0.4.5 · Secure mode</div>
           <button className="mt-3 text-sm text-slate-300 hover:text-white" onClick={clearToken}>Sign out</button>
         </div>
       </aside>
@@ -137,15 +137,19 @@ export default function App() {
   );
 }
 
-function Login({ onLogin }: { onLogin: (token: string) => void }) {
+function Login({ onLogin, twoFactorEnabled }: { onLogin: (apiKey: string, totpCode: string) => Promise<void>; twoFactorEnabled: boolean }) {
   const [value, setValue] = React.useState("");
+  const [totpCode, setTotpCode] = React.useState("");
+  const [error, setError] = React.useState("");
   return <main className="min-h-screen bg-slate-950 grid place-items-center p-6">
-    <form className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8" onSubmit={(event) => { event.preventDefault(); if (value) onLogin(value); }}>
+    <form className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8" onSubmit={async (event) => { event.preventDefault(); setError(""); try { await onLogin(value, totpCode); } catch (reason) { setError(reason instanceof Error ? reason.message : "Login failed"); } }}>
       <ShieldCheck className="h-10 w-10 text-cyan-400" />
       <h1 className="mt-4 text-2xl font-bold">OpenClaw Sentinel</h1>
       <p className="mt-2 text-sm text-slate-400">The API key remains in memory and is cleared when this page is closed.</p>
       <label className="mt-6 block text-sm" htmlFor="api-key">API key</label>
       <input id="api-key" type="password" autoComplete="off" value={value} onChange={(event) => setValue(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3" />
+      {twoFactorEnabled && <><label className="mt-4 block text-sm" htmlFor="totp-code">Authenticator code</label><input id="totp-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={totpCode} onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3" required /></>}
+      {error && <p className="mt-4 text-sm text-rose-300" role="alert">{error}</p>}
       <button className="mt-4 w-full rounded-lg bg-cyan-500 p-3 font-semibold text-slate-950">Connect</button>
     </form>
   </main>;

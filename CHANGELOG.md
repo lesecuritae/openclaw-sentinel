@@ -5,6 +5,15 @@ stable release.
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-04
+
+### Added
+
+- Opt-in Docker event, Linux authentication, and service-log collectors.
+- Real service/container/warning aggregates in the production dashboard.
+- Isolated HAProxy and service integration stack with traffic simulation fixtures.
+- Configurable detection rules for authentication failures and container changes.
+
 ## [0.4.0] - 2026-09-04
 
 ### Added

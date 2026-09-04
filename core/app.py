@@ -10,13 +10,17 @@ from fastapi.staticfiles import StaticFiles
 
 from actions.anubis import AnubisChallengeAdapter
 from actions.haproxy import HAProxyActionAdapter
+from collectors.auth import LinuxAuthCollector
+from collectors.docker import DockerEventCollector
 from collectors.haproxy import HAProxyCollector, HAProxyRequestCollector, HAProxyRuntimeClient
+from collectors.service import ServiceLogCollector
 from core.api.v1 import api_router, ws_router
 from core.api.v1.ws.events import manager as event_manager
 from core.config import Settings
 from core.config_manager import ConfigManager
 from core.models import SecurityEvent
 from core.service import SentinelService
+from core.web_auth import WebSessionManager
 from database.store import SecurityStore
 from engine.detection import DetectionEngine
 from engine.policy import PolicyEngine
@@ -42,6 +46,13 @@ service = SentinelService(
 )
 llm = LLMGateway.from_settings(settings)
 tools = SecurityTools(service, store, llm, intelligence)
+web_sessions = WebSessionManager(
+    enabled=settings.web_2fa_enabled,
+    api_key=settings.sentinel_api_key,
+    secret=settings.web_2fa_secret,
+    secret_file=Path(settings.web_2fa_secret_file) if settings.web_2fa_secret_file else None,
+    ttl_seconds=settings.web_session_ttl_seconds,
+)
 
 
 def authenticate(authorization: str | None = Header(default=None)) -> None:
@@ -69,18 +80,44 @@ async def lifespan(_: FastAPI):
                 ).run(service.process)
             )
         )
+    if settings.docker_collector_enabled:
+        tasks.append(
+            asyncio.create_task(
+                DockerEventCollector(
+                    enabled=True, api_url=settings.docker_api_url
+                ).run(service.process)
+            )
+        )
+    if settings.auth_collector_enabled:
+        tasks.append(
+            asyncio.create_task(
+                LinuxAuthCollector(
+                    enabled=True,
+                    log_paths=[path for path in settings.auth_log_paths.split(":") if path],
+                ).run(service.process)
+            )
+        )
+    if settings.service_log_collector_enabled:
+        tasks.append(
+            asyncio.create_task(
+                ServiceLogCollector(
+                    enabled=True, log_path=settings.service_log_path or None
+                ).run(service.process)
+            )
+        )
     yield
     for task in tasks:
         task.cancel()
 
 
-app = FastAPI(title="OpenClaw Sentinel", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="OpenClaw Sentinel", version="0.4.5", lifespan=lifespan)
 app.state.settings = settings
 app.state.store = store
 app.state.service = service
 app.state.tools = tools
 app.state.runtime = runtime
 app.state.config_manager = ConfigManager(settings)
+app.state.web_sessions = web_sessions
 if settings.allowed_origins:
     app.add_middleware(
         CORSMiddleware,

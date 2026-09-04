@@ -12,6 +12,7 @@ from core.api.v1 import api_router, ws_router
 from core.api.v1.ws.events import EventConnectionManager
 from core.config import Settings
 from core.config_manager import ConfigManager
+from core.web_auth import WebSessionManager, totp
 from database.store import SecurityStore
 
 
@@ -40,6 +41,7 @@ def web_app(tmp_path):
     app.state.tools = ToolsStub()
     app.state.runtime = SimpleNamespace(command=lambda _command: asyncio.sleep(0, result=""))
     app.state.service = SimpleNamespace(haproxy=None)
+    app.state.web_sessions = WebSessionManager(enabled=False, api_key="test-secret")
     app.include_router(api_router)
     app.include_router(ws_router, prefix="/api/v1")
     return app
@@ -100,3 +102,26 @@ def test_broadcast_queue_is_bounded_and_keeps_latest():
     assert queue.qsize() == 2
     assert queue.get_nowait() == {"id": 2}
     assert queue.get_nowait() == {"id": 3}
+
+
+def test_enabled_two_factor_cannot_be_bypassed_with_api_key(web_app):
+    secret = "JBSWY3DPEHPK3PXP"
+    web_app.state.web_sessions = WebSessionManager(
+        enabled=True, api_key="test-secret", secret=secret
+    )
+    with TestClient(web_app) as client:
+        permanent = {"Authorization": "Bearer test-secret"}
+        assert client.get("/api/v1/dashboard", headers=permanent).status_code == 401
+        login = client.post(
+            "/api/v1/auth/session",
+            json={"api_key": "test-secret", "totp_code": totp(secret)},
+        )
+        assert login.status_code == 200
+        session = login.json()["token"]
+        headers = {"Authorization": f"Bearer {session}"}
+        assert client.get("/api/v1/dashboard", headers=headers).status_code == 200
+        with client.websocket_connect("/api/v1/ws/events") as websocket:
+            websocket.send_json({"token": session})
+            assert websocket.receive_json() == {"type": "authenticated"}
+        assert client.post("/api/v1/auth/logout", headers=headers).status_code == 204
+        assert client.get("/api/v1/dashboard", headers=headers).status_code == 401

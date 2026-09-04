@@ -33,3 +33,28 @@ rules:
     threshold: 4
     window: 60
     score: 30
+  auth_bruteforce:
+    event_types: [linux_auth_failed, vaultwarden_failed, nextcloud_failed, gitea_failed]
+    threshold: 5
+    window: 300
+    score: 45
+  docker_restart_loop:
+    event_types: [docker_restart, docker_crash]
+    threshold: 3
+    window: 600
+    score: 35
+  docker_privileged:
+    event_types: [docker_privileged]
+    threshold: 1
+    window: 60
+    score: 55
+  docker_unknown_container:
+    event_types: [docker_create_unknown]
+    threshold: 1
+    window: 60
+    score: 25
+  docker_configuration_change:
+    event_types: [docker_image_change, docker_port_change]
+    threshold: 1
+    window: 60
+    score: 20

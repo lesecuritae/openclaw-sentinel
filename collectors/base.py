@@ -7,6 +7,9 @@ EventSink = Callable[[SecurityEvent], Awaitable[None]]
 
 
 class Collector(Protocol):
-    """Contract implemented by HAProxy and future event sources."""
+    """Unified collector contract. All sources (HAProxy, Docker, auth, service logs)
+    implement this interface and emit normalized SecurityEvent objects."""
 
     async def run(self, emit: EventSink) -> None: ...
+
+    async def collect(self) -> list[SecurityEvent]: ...

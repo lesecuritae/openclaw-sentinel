@@ -53,9 +53,15 @@ async def events_websocket(websocket: WebSocket):
     except (TimeoutError, ValueError, WebSocketDisconnect):
         await websocket.close(code=1008)
         return
-    expected = websocket.app.state.settings.sentinel_api_key
     supplied = frame.get("token", "") if isinstance(frame, dict) else ""
-    if expected and not secrets.compare_digest(str(supplied), expected):
+    sessions = websocket.app.state.web_sessions
+    expected = websocket.app.state.settings.sentinel_api_key
+    authenticated = (
+        sessions.validate(str(supplied))
+        if sessions.enabled
+        else not expected or secrets.compare_digest(str(supplied), expected)
+    )
+    if not authenticated:
         await websocket.close(code=1008)
         return
 

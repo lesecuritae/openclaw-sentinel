@@ -129,7 +129,7 @@ class SecurityTools:
                 result = {
                     "protocolVersion": "2025-03-26",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.4.0"},
+                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.4.5"},
                 }
             elif method == "tools/list":
                 result = {"tools": self.definitions()}

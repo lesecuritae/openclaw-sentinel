@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     haproxy_request_host: str = "0.0.0.0"
     haproxy_request_port: int = 1514
     actions_enabled: bool = False
+    docker_collector_enabled: bool = False
+    docker_api_url: str = ""
+    auth_collector_enabled: bool = False
+    service_log_collector_enabled: bool = False
+    auth_log_paths: str = "/var/log/auth.log"
+    service_log_path: str = ""
     sentinel_api_key: str = ""
     llm_provider: str = "disabled"
     openrouter_api_key: str = ""
@@ -78,6 +84,10 @@ class Settings(BaseSettings):
     anubis_url: str = ""
     abusech_auth_key: str = ""
     cors_origin_allowlist: str = ""
+    web_2fa_enabled: bool = False
+    web_2fa_secret: str = ""
+    web_2fa_secret_file: str = ""
+    web_session_ttl_seconds: int = Field(default=900, ge=60, le=86400)
 
     def load_rules(self) -> RulesConfig:
         return RulesConfig.model_validate(yaml.safe_load(self.rules_path.read_text()))
