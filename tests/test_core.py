@@ -77,7 +77,7 @@ async def test_simulated_event_blocks_via_runtime(tmp_path: Path):
         ip="1.2.3.4",
         service="web",
         event_type="request",
-        metadata={"path": "/.env"},
+        path="/.env",
     )
     result = await service.process(event)
     assert result.action == Action.BLOCK

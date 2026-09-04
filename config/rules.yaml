@@ -14,8 +14,22 @@ rules:
     threshold: 20
     window: 60
     score: 30
+  login_bruteforce:
+    event_types: [request]
+    methods: [POST]
+    paths: [/login, /signin, /api/login, /api/auth, /identity/connect/token]
+    threshold: 20
+    window: 60
+    score: 30
   scanner:
-    paths: [/.env, /.git/config, /wp-admin, /phpmyadmin]
+    paths: [/.env, /.git/config, /wp-admin, /admin, /phpmyadmin]
     threshold: 1
     window: 300
     score: 50
+  scanner_pattern:
+    event_types: [request]
+    paths: [/.env, /.git/config, /wp-admin, /admin, /phpmyadmin, /login]
+    distinct_by: path
+    threshold: 4
+    window: 60
+    score: 30

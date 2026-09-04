@@ -28,6 +28,7 @@ class SentinelService:
             event, lambda seconds: self.store.recent_events(event.ip, seconds)
         )
         assessment = self.risk.assess(event.ip, detections)
+        self.store.update_event_score(event.event_id, assessment.risk_score)
         assessment.action = self.policy.decide(assessment)
         self.store.update_profile(assessment)
         if event.ip != "unknown":

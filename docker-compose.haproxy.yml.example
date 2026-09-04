@@ -2,6 +2,7 @@ services:
   sentinel:
     environment:
       HAPROXY_COLLECTOR_ENABLED: "true"
+      HAPROXY_REQUEST_COLLECTOR_ENABLED: "true"
       ACTIONS_ENABLED: "true"
       HAPROXY_SOCKET: /run/haproxy/admin.sock
       HAPROXY_BLOCKLIST_PATH: /etc/haproxy/sentinel-blocklist.lst

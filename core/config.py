@@ -10,6 +10,8 @@ class DetectionRule(BaseModel):
     event_types: list[str] = Field(default_factory=list)
     statuses: list[int] = Field(default_factory=list)
     paths: list[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    distinct_by: str | None = None
     threshold: int = 1
     window: int = 60
     score: int
@@ -38,6 +40,9 @@ class Settings(BaseSettings):
     haproxy_blocklist_path: str = "/etc/haproxy/sentinel-blocklist.lst"
     collector_interval_seconds: float = 5.0
     haproxy_collector_enabled: bool = True
+    haproxy_request_collector_enabled: bool = False
+    haproxy_request_host: str = "0.0.0.0"
+    haproxy_request_port: int = 1514
     actions_enabled: bool = False
     sentinel_api_key: str = ""
     llm_provider: str = "disabled"

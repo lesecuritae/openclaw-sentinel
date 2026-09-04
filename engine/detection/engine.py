@@ -21,7 +21,8 @@ class DetectionEngine:
             unseen = all(item.event_id != event.event_id for item in matching)
             if self._matches(event, rule) and unseen:
                 matching.append(event)
-            if len(matching) >= rule.threshold:
+            count = self._count(matching, rule.distinct_by)
+            if count >= rule.threshold:
                 detections.append(Detection(rule=name, score=rule.score, reason=name))
         return detections
 
@@ -33,10 +34,18 @@ class DetectionEngine:
         if rule.statuses and status not in rule.statuses:
             return False
         if rule.paths:
-            path = str(event.metadata.get("path") or "")
+            path = event.path or ""
             matches_path = any(
                 path == candidate or path.startswith(candidate + "/") for candidate in rule.paths
             )
             if not matches_path:
                 return False
-        return True
+        return not rule.methods or (event.method or "").upper() in rule.methods
+
+    @staticmethod
+    def _count(events: list[SecurityEvent], distinct_by: str | None) -> int:
+        if not distinct_by:
+            return len(events)
+        if distinct_by not in SecurityEvent.model_fields:
+            raise ValueError(f"unsupported distinct_by field: {distinct_by}")
+        return len({getattr(event, distinct_by) for event in events if getattr(event, distinct_by)})

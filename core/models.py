@@ -29,6 +29,12 @@ class SecurityEvent(BaseModel):
     ip: str
     service: str
     event_type: str
+    path: str | None = None
+    method: str | None = None
+    user_agent: str | None = None
+    hostname: str | None = None
+    country: str | None = None
+    asn: str | None = None
     severity: Severity = Severity.INFO
     metadata: dict[str, Any] = Field(default_factory=dict)
 

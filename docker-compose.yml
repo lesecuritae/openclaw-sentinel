@@ -3,11 +3,11 @@ services:
     build: .
     image: openclaw-sentinel:0.1.0
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${SENTINEL_PORT:-8080}:8080"
     environment:
       DATABASE_PATH: /data/sentinel.db
       HAPROXY_COLLECTOR_ENABLED: ${HAPROXY_COLLECTOR_ENABLED:-false}
+      HAPROXY_REQUEST_COLLECTOR_ENABLED: ${HAPROXY_REQUEST_COLLECTOR_ENABLED:-false}
+      HAPROXY_REQUEST_PORT: ${HAPROXY_REQUEST_PORT:-1514}
       ACTIONS_ENABLED: ${ACTIONS_ENABLED:-false}
       SENTINEL_API_KEY: ${SENTINEL_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
@@ -17,6 +17,9 @@ services:
       ANUBIS_URL: ${ANUBIS_URL:-}
     volumes:
       - sentinel-data:/data
+    ports:
+      - "127.0.0.1:${SENTINEL_PORT:-8080}:8080"
+      - "${HAPROXY_REQUEST_BIND:-127.0.0.1}:${HAPROXY_REQUEST_PORT:-1514}:1514/udp"
     security_opt:
       - no-new-privileges:true
     cap_drop:

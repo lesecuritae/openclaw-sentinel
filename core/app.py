@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from actions.anubis import AnubisChallengeAdapter
 from actions.haproxy import HAProxyActionAdapter
-from collectors.haproxy import HAProxyCollector, HAProxyRuntimeClient
+from collectors.haproxy import HAProxyCollector, HAProxyRequestCollector, HAProxyRuntimeClient
 from core.config import Settings
 from core.models import SecurityEvent
 from core.service import SentinelService
@@ -40,13 +40,23 @@ def authenticate(authorization: str | None = Header(default=None)) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    task = None
+    tasks = []
     if settings.haproxy_collector_enabled:
-        task = asyncio.create_task(
-            HAProxyCollector(runtime, settings.collector_interval_seconds).run(service.process)
+        tasks.append(
+            asyncio.create_task(
+                HAProxyCollector(runtime, settings.collector_interval_seconds).run(service.process)
+            )
+        )
+    if settings.haproxy_request_collector_enabled:
+        tasks.append(
+            asyncio.create_task(
+                HAProxyRequestCollector(
+                    settings.haproxy_request_host, settings.haproxy_request_port
+                ).run(service.process)
+            )
         )
     yield
-    if task:
+    for task in tasks:
         task.cancel()
 
 
