@@ -1,7 +1,7 @@
 services:
   sentinel:
     build: .
-    image: openclaw-sentinel:0.3.0
+    image: openclaw-sentinel:0.4.0
     restart: unless-stopped
     environment:
       DATABASE_PATH: ${DATABASE_PATH:-/data/sentinel.db}
@@ -23,6 +23,7 @@ services:
       ABUSECH_AUTH_KEY: ${ABUSECH_AUTH_KEY:-}
       LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://host.docker.internal:11434}
       ANUBIS_URL: ${ANUBIS_URL:-}
+      CORS_ORIGIN_ALLOWLIST: ${CORS_ORIGIN_ALLOWLIST:-}
     volumes:
       - sentinel-data:/data
     ports:

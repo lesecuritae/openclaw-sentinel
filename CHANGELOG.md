@@ -5,6 +5,15 @@ stable release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-04
+
+### Added
+
+- Authenticated web dashboard with live events and operational status views.
+- Versioned REST API and bounded, origin-checked WebSocket event delivery.
+- Schema-validated atomic configuration management with redacted secret status.
+- Reproducible frontend and backend multi-stage container build.
+
 ## [0.3.0] - 2026-09-04
 
 ### Added

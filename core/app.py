@@ -1,13 +1,20 @@
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from actions.anubis import AnubisChallengeAdapter
 from actions.haproxy import HAProxyActionAdapter
 from collectors.haproxy import HAProxyCollector, HAProxyRequestCollector, HAProxyRuntimeClient
+from core.api.v1 import api_router, ws_router
+from core.api.v1.ws.events import manager as event_manager
 from core.config import Settings
+from core.config_manager import ConfigManager
 from core.models import SecurityEvent
 from core.service import SentinelService
 from database.store import SecurityStore
@@ -31,13 +38,17 @@ service = SentinelService(
     HAProxyActionAdapter(runtime, settings.haproxy_blocklist_path, settings.actions_enabled),
     AnubisChallengeAdapter(settings.anubis_url),
     intelligence,
+    event_manager.publish,
 )
 llm = LLMGateway.from_settings(settings)
 tools = SecurityTools(service, store, llm, intelligence)
 
 
 def authenticate(authorization: str | None = Header(default=None)) -> None:
-    if settings.sentinel_api_key and authorization != f"Bearer {settings.sentinel_api_key}":
+    supplied = authorization.removeprefix("Bearer ") if authorization else ""
+    if settings.sentinel_api_key and not secrets.compare_digest(
+        supplied, settings.sentinel_api_key
+    ):
         raise HTTPException(status_code=401, detail="invalid API key")
 
 
@@ -63,7 +74,31 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="OpenClaw Sentinel", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="OpenClaw Sentinel", version="0.4.0", lifespan=lifespan)
+app.state.settings = settings
+app.state.store = store
+app.state.service = service
+app.state.tools = tools
+app.state.runtime = runtime
+app.state.config_manager = ConfigManager(settings)
+if settings.allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "PUT", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+    return response
 
 
 @app.get("/health")
@@ -99,3 +134,11 @@ async def unblock(ip: str):
 @app.post("/mcp", dependencies=[Depends(authenticate)])
 async def mcp(request: dict):
     return await tools.jsonrpc(request)
+
+
+app.include_router(api_router)
+app.include_router(ws_router, prefix="/api/v1")
+
+frontend = Path("/app/frontend")
+if frontend.exists():
+    app.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")

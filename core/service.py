@@ -23,10 +23,12 @@ class SentinelService:
         haproxy: HAProxyActionAdapter,
         anubis: AnubisChallengeAdapter,
         intelligence=None,
+        event_publisher=None,
     ):
         self.store, self.detection, self.risk, self.policy = store, detection, risk, policy
         self.haproxy, self.anubis = haproxy, anubis
         self.intelligence = intelligence
+        self.event_publisher = event_publisher
         self.behavior = BehaviorAnalyzer()
         self.geo_time = GeoTimeAnalyzer()
         self.client = ClientMismatchAnalyzer()
@@ -88,6 +90,15 @@ class SentinelService:
                 ",".join(assessment.reasons),
                 result.provider,
                 result.applied,
+            )
+        if self.event_publisher:
+            self.event_publisher(
+                {
+                    "event": event.model_dump(mode="json"),
+                    "risk_score": assessment.risk_score,
+                    "action": assessment.action.value,
+                    "factors": [factor.model_dump() for factor in assessment.factors],
+                }
             )
         return assessment
 

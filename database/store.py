@@ -526,3 +526,96 @@ class SecurityStore:
                 "SELECT * FROM behavior_anomalies WHERE id=?", (anomaly_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    # Phase-4 bounded/paginated queries
+    def profile_summary(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM ip_profile ORDER BY last_seen DESC LIMIT ?",
+                (min(max(limit, 1), 500),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def event_count_24h(self) -> int:
+        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS c FROM events WHERE timestamp >= ?",
+                (since,),
+            ).fetchone()
+        return row["c"] if row else 0
+
+    def action_count_24h(self, action: str) -> int:
+        since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS c FROM actions WHERE action = ? AND timestamp >= ?",
+                (action, since),
+            ).fetchone()
+        return row["c"] if row else 0
+
+    def events_paged(
+        self, ip: str | None = None, limit: int = 100, offset: int = 0
+    ) -> list[dict]:
+        sql = "SELECT * FROM events"
+        args: list = []
+        if ip:
+            sql += " WHERE ip = ?"
+            args.append(ip)
+        sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        args.append(min(max(limit, 1), 1000))
+        args.append(max(offset, 0))
+        with self.connect() as db:
+            rows = db.execute(sql, args).fetchall()
+        return [self._event_dict(row) for row in rows]
+
+    def incidents_paged(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT * FROM actions WHERE action != 'allow'
+                ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
+                (min(max(limit, 1), 1000), max(offset, 0)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def services_list(self, limit: int = 50) -> list[str]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT service FROM events ORDER BY service DESC LIMIT ?",
+                (min(max(limit, 1), 200),),
+            ).fetchall()
+        return [row[0] for row in rows if row[0]]
+
+    def top_ips(self, limit: int = 10) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT ip, COUNT(*) AS count FROM events GROUP BY ip ORDER BY count DESC LIMIT ?",
+                (min(max(limit, 1), 50),),
+            ).fetchall()
+        return [{"ip": row["ip"], "count": row["count"]} for row in rows]
+
+    def devices_for_ip(self, ip: str, limit: int = 20) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM device_profiles WHERE ip_history LIKE ? LIMIT ?",
+                (f'%"{ip}"%', min(max(limit, 1), 100)),
+            ).fetchall()
+        profiles = []
+        for row in rows:
+            profile = self.get_device_profile(row["device_id"])
+            if profile and ip in profile["ip_history"]:
+                profiles.append(profile)
+        return profiles
+
+    @staticmethod
+    def _event_dict(row) -> dict:
+        return {
+            "event_id": row["id"],
+            "timestamp": row["timestamp"],
+            "source": row["source"],
+            "ip": row["ip"],
+            "service": row["service"],
+            "event_type": row["event_type"],
+            "severity": row["severity"],
+            "score": row["score"],
+        }

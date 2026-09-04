@@ -1,0 +1,5 @@
+import { FormEvent, useState } from "react";
+import { useAuth } from "../lib/auth";
+export default function IPAnalysisPage() { const { api } = useAuth(); const [ip, setIp] = useState(""); const [data, setData] = useState<unknown>(); const [error, setError] = useState("");
+  function submit(event: FormEvent) { event.preventDefault(); setError(""); api.get(`/ip/${encodeURIComponent(ip)}`).then(setData).catch((e: Error) => setError(e.message)); }
+  return <section className="space-y-5"><h2 className="text-3xl font-bold">IP analysis</h2><form onSubmit={submit} className="flex gap-3"><input aria-label="IP address" required value={ip} onChange={(e) => setIp(e.target.value)} className="flex-1 rounded-lg border border-slate-700 bg-slate-900 p-3" placeholder="IPv4 or IPv6"/><button className="rounded-lg bg-cyan-500 px-5 font-semibold text-slate-950">Analyze</button></form>{error && <p role="alert" className="text-rose-300">{error}</p>}{data !== undefined && <pre className="overflow-auto rounded-xl bg-slate-900 p-5 text-sm">{JSON.stringify(data, null, 2)}</pre>}</section>; }

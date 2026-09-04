@@ -1,0 +1,5 @@
+import { useEffect, useState } from "react";
+import { useAuth } from "../lib/auth";
+export default function LiveEventsPage() { const { api, token } = useAuth(); const [events, setEvents] = useState<unknown[]>([]); const [status, setStatus] = useState("connecting");
+  useEffect(() => { const socket = new WebSocket(api.websocketUrl()); socket.onopen = () => socket.send(JSON.stringify({ token })); socket.onmessage = (message) => { const data = JSON.parse(message.data); if (data.type === "authenticated") setStatus("live"); else setEvents((current) => [data, ...current].slice(0, 100)); }; socket.onerror = () => setStatus("error"); socket.onclose = () => setStatus((current) => current === "error" ? current : "closed"); return () => socket.close(); }, [api, token]);
+  return <section className="space-y-5"><div className="flex justify-between"><h2 className="text-3xl font-bold">Live events</h2><span className="text-sm text-cyan-300">{status}</span></div>{events.length ? <pre className="overflow-auto rounded-xl bg-slate-900 p-5 text-sm">{JSON.stringify(events, null, 2)}</pre> : <p className="text-slate-400">No live events received.</p>}</section>; }

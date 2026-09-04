@@ -1,11 +1,12 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DetectionRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     event_types: list[str] = Field(default_factory=list)
     statuses: list[int] = Field(default_factory=list)
@@ -18,19 +19,28 @@ class DetectionRule(BaseModel):
 
 
 class RulesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     rules: dict[str, DetectionRule]
 
 
 class PolicyConfig(BaseModel):
-    allow_below: int = 60
-    challenge_below: int = 90
+    model_config = ConfigDict(extra="forbid")
+    allow_below: int = Field(default=60, ge=0, le=99)
+    challenge_below: int = Field(default=90, ge=1, le=100)
     challenge_enabled: bool = False
     block_enabled: bool = True
     challenge_provider: str = "anubis"
     block_provider: str = "haproxy"
 
+    @model_validator(mode="after")
+    def ordered_thresholds(self):
+        if self.allow_below >= self.challenge_below:
+            raise ValueError("allow_below must be less than challenge_below")
+        return self
+
 
 class IntelligenceProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     enabled: bool = False
     weight: int = Field(default=0, ge=0, le=100)
     ttl: str | None = None
@@ -39,6 +49,7 @@ class IntelligenceProviderConfig(BaseModel):
 
 
 class IntelligenceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     providers: dict[str, IntelligenceProviderConfig]
     cache_time: dict[str, str] = Field(default_factory=lambda: {"default": "24h"})
     single_source_ceiling: int = Field(default=89, ge=0, le=99)
@@ -66,6 +77,7 @@ class Settings(BaseSettings):
     local_llm_url: str = "http://host.docker.internal:11434"
     anubis_url: str = ""
     abusech_auth_key: str = ""
+    cors_origin_allowlist: str = ""
 
     def load_rules(self) -> RulesConfig:
         return RulesConfig.model_validate(yaml.safe_load(self.rules_path.read_text()))
@@ -75,3 +87,11 @@ class Settings(BaseSettings):
 
     def load_intelligence(self) -> IntelligenceConfig:
         return IntelligenceConfig.model_validate(yaml.safe_load(self.intelligence_path.read_text()))
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_origin_allowlist.split(",")
+            if origin.strip()
+        ]

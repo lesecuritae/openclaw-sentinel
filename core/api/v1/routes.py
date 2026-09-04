@@ -1,0 +1,179 @@
+import ipaddress
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import ValidationError
+
+from core.api.v1.schemas import ConfigUpdate, DashboardSummary, Page
+from core.config_manager import UnknownConfigurationError
+
+router = APIRouter(prefix="/api/v1")
+
+
+def authenticate(request: Request) -> None:
+    expected = request.app.state.settings.sentinel_api_key
+    if not expected:
+        return
+    authorization = request.headers.get("authorization", "")
+    supplied = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+    if not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
+secured = [Depends(authenticate)]
+
+
+def valid_ip(value: str) -> str:
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid IP address") from None
+
+
+@router.get("/dashboard", response_model=DashboardSummary, dependencies=secured)
+def dashboard(request: Request):
+    store = request.app.state.store
+    profiles = store.profile_summary(500)
+    return DashboardSummary(
+        current_risk=max((row["risk_score"] for row in profiles), default=0),
+        events_24h=store.event_count_24h(),
+        blocks_24h=store.action_count_24h("block"),
+        challenges_24h=store.action_count_24h("challenge"),
+        top_attackers=store.top_ips(10),
+        affected_services=store.services_list(50),
+    )
+
+
+@router.get("/events", response_model=Page, dependencies=secured)
+def events(
+    request: Request,
+    ip: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=1_000_000),
+):
+    address = valid_ip(ip) if ip else None
+    return Page(
+        items=request.app.state.store.events_paged(address, limit, offset),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/incidents", response_model=Page, dependencies=secured)
+def incidents(
+    request: Request,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=1_000_000),
+):
+    return Page(
+        items=request.app.state.store.incidents_paged(limit, offset),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/ip/{ip}", dependencies=secured)
+def ip_detail(request: Request, ip: str):
+    address = valid_ip(ip)
+    store = request.app.state.store
+    return {
+        "ip": address,
+        "profile": store.profile(address),
+        "events": store.events_paged(address, 100, 0),
+        "actions": store.action_history(address),
+        "threat_intelligence": store.intelligence_history(address),
+        "devices": store.devices_for_ip(address),
+    }
+
+
+@router.get("/config/{name}", dependencies=secured)
+def get_config(request: Request, name: str):
+    try:
+        return {"name": name, "value": request.app.state.config_manager.read(name)}
+    except UnknownConfigurationError:
+        raise HTTPException(status_code=404, detail="unknown configuration") from None
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_input=False)) from None
+
+
+@router.put("/config/{name}", dependencies=secured)
+def update_config(request: Request, name: str, update: ConfigUpdate):
+    try:
+        return request.app.state.config_manager.update(name, update.value)
+    except UnknownConfigurationError:
+        raise HTTPException(status_code=404, detail="unknown configuration") from None
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_input=False)) from None
+
+
+@router.get("/threat-intelligence", dependencies=secured)
+def threat_intelligence(request: Request):
+    return {
+        "configuration": request.app.state.config_manager.read("intelligence"),
+        "cache": request.app.state.store.threat_sources(),
+    }
+
+
+@router.get("/risk-policy", dependencies=secured)
+def risk_policy(request: Request):
+    return {
+        "rules": request.app.state.config_manager.read("rules"),
+        "policy": request.app.state.config_manager.read("policy"),
+    }
+
+
+@router.get("/haproxy", dependencies=secured)
+async def haproxy(request: Request):
+    runtime = request.app.state.runtime
+    settings = request.app.state.settings
+    response = {"connected": False, "actions_enabled": settings.actions_enabled, "backends": []}
+    try:
+        statistics = await runtime.command("show stat")
+        response["connected"] = True
+        response["backends"] = sorted(
+            {
+                columns[0]
+                for line in statistics.splitlines()
+                if line and not line.startswith("#") and len(columns := line.split(",")) > 1
+            }
+        )[:100]
+    except (FileNotFoundError, ConnectionError, OSError):
+        pass
+    return response
+
+
+@router.get("/challenge", dependencies=secured)
+def challenge(request: Request):
+    settings = request.app.state.settings
+    policy = settings.load_policy()
+    return {
+        "enabled": policy.challenge_enabled,
+        "provider": policy.challenge_provider,
+        "configured": bool(settings.anubis_url),
+        "challenge_below": policy.challenge_below,
+    }
+
+
+@router.get("/llm", dependencies=secured)
+def llm_status(request: Request):
+    settings = request.app.state.settings
+    return {
+        "provider": settings.llm_provider,
+        "model": settings.model,
+        "endpoint": settings.local_llm_url if settings.llm_provider == "local" else None,
+        "credential_configured": bool(settings.openrouter_api_key),
+        "action_control": False,
+    }
+
+
+@router.get("/mcp", dependencies=secured)
+def mcp_status(request: Request):
+    return {
+        "status": "available",
+        "tools": [definition["name"] for definition in request.app.state.tools.definitions()],
+    }
+
+
+@router.post("/haproxy/unblock/{ip}", dependencies=secured)
+async def unblock(request: Request, ip: str):
+    return await request.app.state.service.haproxy.unblock(valid_ip(ip))

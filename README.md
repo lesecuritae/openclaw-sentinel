@@ -173,6 +173,20 @@ country. Adaptive components only produce evidence for the Risk Engine and never
 The MCP interface exposes read-only profile, anomaly and trust inspection tools. See
 [architecture](docs/architecture.md) and [privacy](docs/privacy.md) for details.
 
+## Web dashboard and API
+
+Phase 4 serves a React dashboard at `http://127.0.0.1:8080/`. It provides current risk and
+24-hour totals, live WebSocket events, incidents, IP history, HAProxy state, challenge/LLM/MCP
+status, and validated editors for policy and threat-intelligence configuration. The API is under
+`/api/v1`; live events use `/api/v1/ws/events` and authenticate with the API key in the first
+WebSocket frame. The browser keeps that key in memory rather than persistent web storage.
+
+Set `SENTINEL_API_KEY` before making the service reachable beyond localhost. Cross-origin browser
+access is denied unless exact origins are listed in `CORS_ORIGIN_ALLOWLIST`; same-origin dashboard
+access needs no CORS setting. Configuration updates reject unknown fields, validate thresholds,
+and replace YAML files atomically. A successful update reports that Sentinel must be restarted
+before the new engine configuration is active. See [Phase 4 backend](docs/backend/phase4.md).
+
 ## Security model
 
 Safe defaults matter because Sentinel can sit near enforcement infrastructure. Automatic actions
@@ -197,14 +211,16 @@ python -m venv .venv
 pip install -e '.[test]'
 ruff check .
 pytest
+cd frontend && npm ci && npm run lint && npm test && npm run build && cd ..
 docker compose config
 docker compose build
 ```
 
 Tests cover structured request decoding, persistence, scanner/login detection, distinct paths,
-scoring, policy boundaries, simulated HAProxy collection, runtime ACL blocking, input rejection
-and an LLM provider mock. GitHub Actions runs lint, tests and a Docker
-build on pushes and pull requests.
+scoring, policy boundaries, simulated HAProxy collection, runtime ACL blocking, input rejection,
+dashboard/API authorization, configuration safety, bounded WebSocket delivery and an LLM provider
+mock. GitHub Actions runs Python and frontend lint/tests/builds plus a Docker build on pushes and
+pull requests.
 
 ## Roadmap
 

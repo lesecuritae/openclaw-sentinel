@@ -1,5 +1,7 @@
 .git
 .venv
+frontend/node_modules
+frontend/dist
 data
 tests
 __pycache__
