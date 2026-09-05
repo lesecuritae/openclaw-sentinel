@@ -42,6 +42,8 @@ class SecurityTools:
             },
             "security.get_actions": {"limit": "integer"},
             "security.revoke_action": {"action_id": "integer"},
+            "security.analyze_ip": {"ip": "string"},
+            "security.summarize_events": {"ip": "string"},
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -62,6 +64,7 @@ class SecurityTools:
             "security.test_policy": ["risk_score"],
             "security.add_trusted_entity": ["entity_type", "value", "reason"],
             "security.revoke_action": ["action_id"],
+            "security.analyze_ip": ["ip"],
             "security.check_ip_reputation": ["ip"],
             "security.get_ip_history": ["ip"],
             "security.get_device_profile": ["device_id"],
@@ -102,7 +105,7 @@ class SecurityTools:
             incident = self.store.incident(args["incident_id"])
             if not incident:
                 raise KeyError("incident not found")
-            return incident
+            return {"incident": incident, "analysis": await self._analyze_incident(incident)}
         if name == "security.get_incident_history":
             return {
                 "incident_id": args["incident_id"],
@@ -220,15 +223,53 @@ class SecurityTools:
             )
             if not selected:
                 raise KeyError("action not found")
-            if (
-                not getattr(self.service, "dry_run", True)
-                and selected["action"] in {"block", "rate_limit"}
-            ):
+            if not getattr(self.service, "dry_run", True) and selected["action"] in {
+                "block",
+                "rate_limit",
+            }:
                 await self.service.haproxy.unblock(selected["ip"])
             return self.store.revoke_action(args["action_id"])
+        if name == "security.analyze_ip":
+            ip = args["ip"]
+            return {
+                "ip": ip,
+                "analysis": await self._safe_llm(
+                    self.llm.analyze_ip(
+                        ip,
+                        self.store.profile(ip),
+                        [e.model_dump(mode="json") for e in self.store.events(ip=ip)],
+                        self.store.intelligence_history(ip),
+                    )
+                ),
+            }
+        if name == "security.summarize_events":
+            events = [
+                e.model_dump(mode="json") for e in self.store.events(ip=args.get("ip"), limit=100)
+            ]
+            return {
+                "analysis": await self._safe_llm(self.llm.summarize_events(events)),
+                "event_count": len(events),
+            }
         if name == "security.generate_report":
-            return {"incidents": self.store.incidents(), "profiles": "available per IP"}
+            incidents = self.store.incidents()
+            return {
+                "incidents": incidents,
+                "analysis": await self._safe_llm(self.llm.summarize_events(incidents)),
+                "profiles": "available per IP",
+            }
         raise KeyError(f"unknown tool: {name}")
+
+    async def _safe_llm(self, awaitable):
+        try:
+            return await awaitable
+        except Exception as exc:
+            return {"status": "unavailable", "reason": type(exc).__name__}
+
+    async def _analyze_incident(self, incident: dict):
+        actions = [
+            item for item in self.store.actions(1000) if item.get("ip") == incident.get("component")
+        ]
+        return await self._safe_llm(self.llm.analyze_incident(incident, actions))
 
     async def jsonrpc(self, request: dict) -> dict:
         method, request_id = request.get("method"), request.get("id")

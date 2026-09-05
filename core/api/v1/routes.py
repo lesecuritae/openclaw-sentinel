@@ -118,6 +118,18 @@ def incident_detail(request: Request, incident_id: str):
     return incident
 
 
+@router.get("/ai/incident/{incident_id}", dependencies=secured)
+async def ai_incident(request: Request, incident_id: str):
+    incident = request.app.state.store.incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    try:
+        analysis = await request.app.state.tools._analyze_incident(incident)
+    except Exception as exc:
+        analysis = {"status": "unavailable", "reason": type(exc).__name__}
+    return {"incident": incident, "analysis": analysis, "analysis_only": True}
+
+
 @router.get("/incidents/{incident_id}/history", dependencies=secured)
 def incident_history(request: Request, incident_id: str):
     if not request.app.state.store.incident(incident_id):
@@ -216,8 +228,11 @@ async def revoke_action(request: Request, action_id: int):
     selected = next((item for item in action if item["id"] == action_id), None)
     if not selected:
         raise HTTPException(status_code=404, detail="action not found")
-    if (not request.app.state.settings.response_dry_run
-            and selected["action"] in {"block", "rate_limit"} and selected["ip"]):
+    if (
+        not request.app.state.settings.response_dry_run
+        and selected["action"] in {"block", "rate_limit"}
+        and selected["ip"]
+    ):
         await request.app.state.service.haproxy.unblock(selected["ip"])
     result = request.app.state.store.revoke_action(action_id)
     return result

@@ -18,6 +18,7 @@ import ServicesPage from "./pages/Services";
 import SystemIntegrityPage from "./pages/SystemIntegrity";
 import PoliciesPage from "./pages/Policies";
 import ActionsPage from "./pages/Actions";
+import AIAnalysisPage from "./pages/AIAnalysis";
 import { useAuth } from "./lib/auth";
 
 const navItems = [
@@ -35,6 +36,7 @@ const navItems = [
   { to: "/integrity", label: "System Integrity", icon: ShieldCheck },
   { to: "/policies", label: "Policies", icon: Lock },
   { to: "/actions", label: "Actions", icon: AlertTriangle },
+  { to: "/ai-analysis", label: "AI Analysis", icon: Cpu },
 ];
 
 export default function App() {
@@ -139,6 +141,7 @@ export default function App() {
             <Route path="/integrity" element={<SystemIntegrityPage />} />
             <Route path="/policies" element={<PoliciesPage />} />
             <Route path="/actions" element={<ActionsPage />} />
+            <Route path="/ai-analysis" element={<AIAnalysisPage />} />
           </Routes>
         </div>
         <footer className="max-w-6xl mx-auto px-4 md:px-8 py-6 text-xs text-slate-500 border-t border-slate-900">

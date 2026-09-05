@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     llm_provider: str = "disabled"
     openrouter_api_key: str = ""
     model: str = ""
+    llm_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     local_llm_url: str = "http://host.docker.internal:11434"
     anubis_url: str = ""
     abusech_auth_key: str = ""
