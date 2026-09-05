@@ -1,40 +1,63 @@
-name: openclaw-sentinel-test
+name: openclaw-sentinel-e2e
 services:
-  haproxy-test:
-    image: haproxy:2.8
-    container_name: haproxy-test
-    volumes:
-      - ./tests/test-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - ./tests/test-blocklist.lst:/etc/haproxy/sentinel-blocklist.lst:rw
-    networks:
-      - sentinel-test
+  sentinel:
+    build: .
+    environment:
+      DATABASE_PATH: /data/sentinel.db
+      RULES_PATH: /app/config/rules.yaml
+      POLICY_PATH: /app/config/policy.yaml
+      INTELLIGENCE_PATH: /app/config/intelligence.yaml
+      SENTINEL_API_KEY: e2e-test-key
+      HAPROXY_COLLECTOR_ENABLED: "false"
+      HAPROXY_REQUEST_COLLECTOR_ENABLED: "true"
+      HAPROXY_REQUEST_HOST: 0.0.0.0
+      HAPROXY_REQUEST_PORT: "1514"
+      ACTIONS_ENABLED: "false"
+      LLM_PROVIDER: disabled
+    volumes: [sentinel-data:/data]
+    expose: ["8080", "1514/udp"]
+    networks: [sentinel-test]
     healthcheck:
-      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    ports:
-      - "127.0.0.1:18404:8404"
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
   testservice:
     image: nginx:1.27-alpine
-    container_name: testservice
-    networks:
-      - sentinel-test
+    networks: [sentinel-test]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-  loginservice:
-    image: nginx:1.27-alpine
-    container_name: loginservice
-    networks:
-      - sentinel-test
+      test: [CMD, wget, -q, -O, -, http://127.0.0.1/]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+  haproxy:
+    image: haproxy:2.8
+    depends_on:
+      sentinel: {condition: service_healthy}
+      testservice: {condition: service_healthy}
+    volumes: [./tests/test-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
+    networks: [sentinel-test]
+    ports: ["127.0.0.1:18404:8404"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      test: [CMD, haproxy, -c, -f, /usr/local/etc/haproxy/haproxy.cfg]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+  test-client:
+    image: python:3.12-slim
+    profiles: [e2e]
+    depends_on:
+      haproxy: {condition: service_healthy}
+      sentinel: {condition: service_healthy}
+    environment:
+      TARGET_URL: http://haproxy:8404
+      SENTINEL_URL: http://sentinel:8080
+      SENTINEL_KEY: e2e-test-key
+    volumes: [./tests/e2e_client.py:/e2e_client.py:ro]
+    command: [python, /e2e_client.py]
+    networks: [sentinel-test]
 networks:
   sentinel-test:
     driver: bridge
+volumes:
+  sentinel-data:

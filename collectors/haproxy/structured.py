@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -23,7 +24,17 @@ class HAProxyStructuredEventDecoder:
         start, end = text.find("{"), text.rfind("}")
         if start < 0 or end < start:
             raise ValueError("structured HAProxy event contains no JSON object")
-        raw: dict[str, Any] = json.loads(text[start : end + 1])
+        object_text = text[start : end + 1]
+        try:
+            raw: dict[str, Any] = json.loads(object_text)
+        except json.JSONDecodeError:
+            # HAProxy versions can strip quotes from log-format literals. Accept
+            # only the small, documented key=value object used by our fixture.
+            fields = re.findall(r"([A-Za-z_][A-Za-z0-9_]*):([^,}]+)", object_text)
+            allowed = {"ip", "method", "path", "status", "service"}
+            raw = {key: value.strip(' \"') for key, value in fields if key in allowed}
+            if not raw:
+                raise
         missing = self.required - raw.keys()
         if missing:
             raise ValueError(f"structured HAProxy event missing: {', '.join(sorted(missing))}")

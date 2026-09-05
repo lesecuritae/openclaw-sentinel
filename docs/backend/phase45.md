@@ -30,3 +30,25 @@ Configurable parsers (`AuthParser`) for Vaultwarden, Nextcloud, Gitea,
 and generic Linux auth.log / journald. Rules are configurable data,
 not embedded service logic. Brute-force detection uses existing
 threshold/window rules.
+## HAProxy Docker Compose end-to-end simulation
+
+The isolated test stack validates the real UDP HAProxy request collector and the
+same normalizer, detection, risk, dashboard and MCP paths used in production.
+It has no Docker socket and no access to host services. The container restart
+case is represented by a documented Docker lifecycle fixture posted through the
+authenticated ingestion endpoint; this keeps the test safe and still exercises
+the production event pipeline.
+
+Run it from the repository root:
+
+```bash
+tests/run-haproxy-e2e.sh
+```
+
+The stack starts Sentinel, an nginx backend, HAProxy and a disposable Python
+test client. The client sends normal traffic, repeated login failures, scanner
+paths and a backend error request. HAProxy emits structured UDP events to
+Sentinel. The client then asserts stored events, non-zero risk, incidents, the
+dashboard aggregate and `security.get_services` through MCP, followed by the
+Docker lifecycle fixture. Compose teardown removes the test network, volume and
+containers even after a failed assertion.
