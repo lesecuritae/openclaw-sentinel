@@ -17,7 +17,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install --require-hashes -r requirements-test.lock -r requirements-build.lock
-      - run: pip install --no-deps --no-build-isolation -e .
+      - run: pip install --no-deps --no-build-isolation .
       - run: pip-audit -r requirements-test.lock -r requirements-build.lock --require-hashes
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
