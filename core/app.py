@@ -44,6 +44,7 @@ service = SentinelService(
     AnubisChallengeAdapter(settings.anubis_url),
     intelligence,
     event_manager.publish,
+    settings.response_dry_run,
 )
 llm = LLMGateway.from_settings(settings)
 tools = SecurityTools(service, store, llm, intelligence)
@@ -136,7 +137,7 @@ if settings.allowed_origins:
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
         allow_credentials=False,
-        allow_methods=["GET", "PUT", "POST"],
+        allow_methods=["GET", "PUT", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
 

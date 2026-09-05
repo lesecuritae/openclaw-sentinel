@@ -15,6 +15,9 @@ export class ApiClient {
   }
 
   get<T>(path: string): Promise<T> { return this.request<T>(path); }
+  post<T>(path: string, value: unknown): Promise<T> {
+    return this.request<T>(path, { method: "POST", body: JSON.stringify(value) });
+  }
   put<T>(path: string, value: unknown): Promise<T> {
     return this.request<T>(path, { method: "PUT", body: JSON.stringify({ value }) });
   }

@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS actions (
   action TEXT NOT NULL, reason TEXT NOT NULL, provider TEXT NOT NULL, applied INTEGER NOT NULL,
   expires_at TEXT, policy_rule TEXT
 );
+CREATE TABLE IF NOT EXISTS trusted_entities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL,
+  value TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL,
+  expires_at TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(entity_type, value)
+);
 CREATE TABLE IF NOT EXISTS threat_intelligence (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, source TEXT NOT NULL,
   result INTEGER NOT NULL, score INTEGER NOT NULL, reason TEXT NOT NULL,
@@ -320,14 +326,90 @@ class SecurityStore:
         return profile
 
     def add_action(
-        self, ip: str, action: Action, reason: str, provider: str, applied: bool
+        self,
+        ip: str,
+        action: Action,
+        reason: str,
+        provider: str,
+        applied: bool,
+        expires_at: str | None = None,
+        policy_rule: str | None = None,
     ) -> None:
         with self.connect() as db:
             db.execute(
-                """INSERT INTO actions(timestamp,ip,action,reason,provider,applied)
-                VALUES(?,?,?,?,?,?)""",
-                (datetime.now(UTC).isoformat(), ip, action.value, reason, provider, int(applied)),
+                """INSERT INTO actions(timestamp,ip,action,reason,provider,applied,
+                expires_at,policy_rule)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    ip,
+                    action.value,
+                    reason,
+                    provider,
+                    int(applied),
+                    expires_at,
+                    policy_rule,
+                ),
             )
+
+    @staticmethod
+    def action_duration_minutes(action: Action) -> int:
+        return 30 if action in {Action.BLOCK, Action.CHALLENGE, Action.RATE_LIMIT} else 0
+
+    def action_expiry(self, action: Action) -> str | None:
+        minutes = self.action_duration_minutes(action)
+        return (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat() if minutes else None
+
+    def add_trusted_entity(
+        self, entity_type: str, value: str, reason: str, expires_at: str | None = None
+    ) -> dict:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO trusted_entities(entity_type,value,reason,created_at,expires_at)
+                VALUES(?,?,?,?,?) ON CONFLICT(entity_type,value) DO UPDATE SET
+                reason=excluded.reason, expires_at=excluded.expires_at, enabled=1""",
+                (entity_type, value, reason, now, expires_at),
+            )
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM trusted_entities WHERE entity_type=? AND value=?",
+                (entity_type, value),
+            ).fetchone()
+        return dict(row) if row else {}
+
+    def trusted_entities(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM trusted_entities WHERE enabled=1 ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def disable_trusted_entity(self, entity_id: int) -> bool:
+        with self.connect() as db:
+            cursor = db.execute("UPDATE trusted_entities SET enabled=0 WHERE id=?", (entity_id,))
+        return cursor.rowcount > 0
+
+    def trusted_match(self, ip: str, device_id: str | None = None) -> bool:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM trusted_entities WHERE enabled=1 "
+                "AND (expires_at IS NULL OR expires_at>?)",
+                (now,),
+            ).fetchall()
+        import ipaddress
+
+        for row in rows:
+            if row["entity_type"] == "device" and device_id == row["value"]:
+                return True
+            if row["entity_type"] in {"ip", "network"}:
+                try:
+                    if ipaddress.ip_address(ip) in ipaddress.ip_network(row["value"], strict=False):
+                        return True
+                except ValueError:
+                    continue
+        return False
 
     def create_incident(
         self,

@@ -14,6 +14,9 @@ class PolicyEngine:
         return Action(aliases.get(str(value), str(value)))
 
     def decide(self, assessment: RiskAssessment, context: dict | None = None) -> Action:
+        return self.evaluate(assessment, context)["action"]
+
+    def evaluate(self, assessment: RiskAssessment, context: dict | None = None) -> dict:
         for rule in sorted(self.config.rules, key=lambda item: int(item.get("priority", 100))):
             condition = rule.get("condition", {})
             if all(
@@ -27,21 +30,34 @@ class PolicyEngine:
                     and context.get("source") == condition.get("source"),
                 )
             ):
-                return self._action(rule.get("action", "allow"))
+                action = self._action(rule.get("action", "allow"))
+                return {
+                    "action": action,
+                    "rule": rule,
+                    "reason": "explicit deterministic rule matched",
+                }
         if assessment.risk_score < self.config.allow_below:
-            return Action.ALLOW
+            return {"action": Action.ALLOW, "rule": None, "reason": "risk below allow threshold"}
         if assessment.risk_score < self.config.challenge_below:
-            return Action.CHALLENGE if self.config.challenge_enabled else Action.ALLOW
+            action = Action.CHALLENGE if self.config.challenge_enabled else Action.ALLOW
+            return {"action": action, "rule": None, "reason": "risk in challenge band"}
         if self.config.require_explicit_block_rule:
-            return Action.ALLOW
-        return Action.BLOCK if self.config.block_enabled else Action.ALLOW
+            return {"action": Action.ALLOW, "rule": None, "reason": "explicit block rule required"}
+        return {
+            "action": Action.BLOCK if self.config.block_enabled else Action.ALLOW,
+            "rule": None,
+            "reason": "risk threshold policy",
+        }
 
     def explain(self, assessment: RiskAssessment, context: dict | None = None) -> dict:
-        action = self.decide(assessment, context)
+        result = self.evaluate(assessment, context)
         return {
-            "action": action.value,
+            "action": result["action"].value,
             "risk_score": assessment.risk_score,
             "deterministic": True,
+            "rule": result["rule"],
+            "reason": result["reason"],
+            "context": context or {},
             "rules": self.config.rules,
         }
 

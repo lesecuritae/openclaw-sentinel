@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     haproxy_request_host: str = "0.0.0.0"
     haproxy_request_port: int = 1514
     actions_enabled: bool = False
+    response_dry_run: bool = True
     docker_collector_enabled: bool = False
     docker_api_url: str = ""
     auth_collector_enabled: bool = False

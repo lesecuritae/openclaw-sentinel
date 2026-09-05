@@ -24,11 +24,13 @@ class SentinelService:
         anubis: AnubisChallengeAdapter,
         intelligence=None,
         event_publisher=None,
+        dry_run: bool = False,
     ):
         self.store, self.detection, self.risk, self.policy = store, detection, risk, policy
         self.haproxy, self.anubis = haproxy, anubis
         self.intelligence = intelligence
         self.event_publisher = event_publisher
+        self.dry_run = dry_run
         self.behavior = BehaviorAnalyzer()
         self.geo_time = GeoTimeAnalyzer()
         self.client = ClientMismatchAnalyzer()
@@ -94,9 +96,12 @@ class SentinelService:
 
         # Policy is evaluated only after the incident record has captured the
         # evidence and risk state for this event.
-        assessment.action = self.policy.decide(
-            assessment, {"event_type": event.event_type, "source": event.source}
-        )
+        context = {"event_type": event.event_type, "source": event.source, "ip": event.ip}
+        if event.ip != "unknown" and self.store.trusted_match(event.ip, event.device_id):
+            assessment.action = Action.ALLOW
+            assessment.reasons.append("trusted entity: response suppressed")
+        else:
+            assessment.action = self.policy.decide(assessment, context)
 
         if event.ip and not infrastructure_event:
             self.store.update_profile(assessment)
@@ -113,12 +118,17 @@ class SentinelService:
                 if event.method:
                     self.store.observe_baseline(event.service, f"method:{event.method.upper()}")
             result = await self._act(assessment)
+            expires_at = self.store.action_expiry(assessment.action)
             self.store.add_action(
                 event.ip,
                 assessment.action,
                 ",".join(assessment.reasons),
                 result.provider,
                 result.applied,
+                expires_at=expires_at,
+                policy_rule=str(
+                    self.policy.explain(assessment, context).get("rule") or "threshold"
+                ),
             )
         if self.event_publisher:
             self.event_publisher(
@@ -126,6 +136,8 @@ class SentinelService:
                     "event": event.model_dump(mode="json"),
                     "risk_score": assessment.risk_score,
                     "action": assessment.action.value,
+                    "action_preview": self.action_preview(assessment),
+                    "dry_run": self.dry_run,
                     "factors": [factor.model_dump() for factor in assessment.factors],
                 }
             )
@@ -153,6 +165,14 @@ class SentinelService:
         return assessment
 
     async def _act(self, assessment: RiskAssessment) -> ActionResult:
+        if self.dry_run:
+            return ActionResult(
+                action=assessment.action,
+                ip=assessment.ip,
+                provider="dry_run",
+                applied=False,
+                detail=self.action_preview(assessment),
+            )
         if assessment.action == Action.BLOCK:
             return await self.haproxy.block(assessment.ip)
         if assessment.action == Action.CHALLENGE:
@@ -166,6 +186,13 @@ class SentinelService:
                 detail="prepared action recorded; adapter not enabled",
             )
         return ActionResult(action=Action.ALLOW, ip=assessment.ip, provider="policy", applied=True)
+
+    def action_preview(self, assessment: RiskAssessment) -> str:
+        duration = self.store.action_duration_minutes(assessment.action)
+        return (
+            f"{assessment.action.value} would be prepared for {duration} minutes; "
+            "no action executed"
+        )
 
     async def explain_event(self, event: SecurityEvent, llm) -> str:
         return await llm.explain(json.dumps(event.model_dump(mode="json")))

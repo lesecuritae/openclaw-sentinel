@@ -208,7 +208,40 @@ def policies(request: Request):
 @router.post("/policies/test", dependencies=secured)
 def test_policy(request: Request, payload: dict):
     score = int(payload.get("risk_score", 0))
-    return request.app.state.service.policy.test(score, payload.get("context"))
+    context = dict(payload.get("context") or {})
+    context.update(
+        {key: payload[key] for key in ("ip", "event_type", "source", "factors") if key in payload}
+    )
+    result = request.app.state.service.policy.test(score, context)
+    result["dry_run"] = True
+    result["preview"] = f"{result['action']} would be prepared; no action executed"
+    return result
+
+
+@router.get("/trusted-entities", dependencies=secured)
+def trusted_entities(request: Request):
+    return {"entities": request.app.state.store.trusted_entities()}
+
+
+@router.post("/trusted-entities", dependencies=secured)
+def add_trusted_entity(request: Request, payload: dict):
+    entity_type = str(payload.get("entity_type", ""))
+    if (
+        entity_type not in {"ip", "network", "device"}
+        or not payload.get("value")
+        or not payload.get("reason")
+    ):
+        raise HTTPException(status_code=422, detail="entity_type, value and reason are required")
+    return request.app.state.store.add_trusted_entity(
+        entity_type, str(payload["value"]), str(payload["reason"]), payload.get("expires_at")
+    )
+
+
+@router.delete("/trusted-entities/{entity_id}", dependencies=secured)
+def disable_trusted_entity(request: Request, entity_id: int):
+    if not request.app.state.store.disable_trusted_entity(entity_id):
+        raise HTTPException(status_code=404, detail="trusted entity not found")
+    return {"disabled": True, "id": entity_id}
 
 
 @router.get("/haproxy", dependencies=secured)

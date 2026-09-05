@@ -29,6 +29,17 @@ class SecurityTools:
                 "event_type": "string",
                 "source": "string",
             },
+            "security.get_trusted_entities": {},
+            "security.add_trusted_entity": {
+                "entity_type": "string",
+                "value": "string",
+                "reason": "string",
+            },
+            "security.preview_action": {
+                "risk_score": "integer",
+                "event_type": "string",
+                "source": "string",
+            },
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -47,6 +58,7 @@ class SecurityTools:
             "security.get_incident_history": ["incident_id"],
             "security.explain_action": ["risk_score"],
             "security.test_policy": ["risk_score"],
+            "security.add_trusted_entity": ["entity_type", "value", "reason"],
             "security.check_ip_reputation": ["ip"],
             "security.get_ip_history": ["ip"],
             "security.get_device_profile": ["device_id"],
@@ -165,7 +177,14 @@ class SecurityTools:
             return self.store.integrity_summary()
         if name in {"security.explain_action", "security.test_policy"}:
             context = {key: args[key] for key in ("event_type", "source") if key in args}
-            return self.service.policy.test(int(args["risk_score"]), context)
+            result = self.service.policy.test(int(args["risk_score"]), context)
+            result.update(
+                {
+                    "dry_run": True,
+                    "preview": f"{result['action']} would be prepared; no action executed",
+                }
+            )
+            return result
         if name == "security.get_policies":
             config = self.service.policy.config
             return {
@@ -174,6 +193,22 @@ class SecurityTools:
                 "challenge_below": config.challenge_below,
                 "require_explicit_block_rule": config.require_explicit_block_rule,
             }
+        if name == "security.get_trusted_entities":
+            return self.store.trusted_entities()
+        if name == "security.add_trusted_entity":
+            return self.store.add_trusted_entity(
+                args["entity_type"], args["value"], args["reason"], args.get("expires_at")
+            )
+        if name == "security.preview_action":
+            context = {key: args[key] for key in ("event_type", "source") if key in args}
+            result = self.service.policy.test(int(args["risk_score"]), context)
+            result.update(
+                {
+                    "dry_run": True,
+                    "preview": f"{result['action']} would be prepared; no action executed",
+                }
+            )
+            return result
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")
