@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import secrets
 
@@ -38,6 +39,32 @@ secured = [Depends(authenticate)]
 @router.get("/auth/status")
 def auth_status(request: Request):
     return {"two_factor_enabled": request.app.state.web_sessions.enabled}
+
+
+@router.get("/setup/status")
+def setup_status(request: Request):
+    return {"initialized": request.app.state.store.setup_initialized(), "version": "0.5.0"}
+
+
+@router.post("/setup/initialize")
+def setup_initialize(request: Request, payload: dict):
+    if request.app.state.store.setup_initialized():
+        raise HTTPException(status_code=409, detail="setup already initialized")
+    username = str(payload.get("username", "")).strip()
+    api_key = str(payload.get("api_key", ""))
+    if not username or len(username) > 128 or len(api_key) < 16:
+        raise HTTPException(status_code=422, detail="username and a strong api_key are required")
+    created = request.app.state.store.initialize_setup(
+        username, "administrator", hashlib.sha256(api_key.encode()).hexdigest(), "0.5.0"
+    )
+    if not created:
+        raise HTTPException(status_code=409, detail="setup already initialized")
+    request.app.state.store.add_audit(username, "setup.initialize", {}, {"role": "administrator"})
+    return {
+        "initialized": True,
+        "role": "administrator",
+        "message": "Set SENTINEL_API_KEY to the configured bootstrap key.",
+    }
 
 
 @router.post("/auth/session")
@@ -270,7 +297,11 @@ def daily_report(request: Request):
 @router.get("/users", dependencies=secured)
 def users(request: Request):
     require_role(request, Role.ADMINISTRATOR)
-    return {"roles": [role.value for role in Role], "current_role": current_role(request).value}
+    return {
+        "roles": [role.value for role in Role],
+        "users": request.app.state.store.users(),
+        "current_role": current_role(request).value,
+    }
 
 
 @router.get("/config/export", dependencies=secured)

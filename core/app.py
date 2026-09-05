@@ -124,7 +124,7 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="OpenClaw Sentinel", version="0.4.5", lifespan=lifespan)
+app = FastAPI(title="OpenClaw Sentinel", version="0.5.0", lifespan=lifespan)
 app.state.settings = settings
 app.state.store = store
 app.state.service = service

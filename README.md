@@ -41,6 +41,27 @@ docker compose up -d --build
 curl http://127.0.0.1:8080/health
 ```
 
+For a first deployment, use `docker-compose.example.yml` and copy `.env.example` to `.env`.
+Open `/api/v1/setup/status`; when uninitialized, complete `/api/v1/setup/initialize` with an
+administrator name and a strong API key, then set the same key in `.env` and restart. The setup
+wizard never returns or stores the cleartext key.
+
+### Installation and updates
+
+Pin the image tag in Compose, keep `/data` on a persistent volume, and take a configuration
+backup before updates. Export/import and backup are available to administrators in the
+Configuration API. Validate a restored configuration before enabling response actions; keep
+`RESPONSE_DRY_RUN=true` and `ACTIONS_ENABLED=false` until collectors, policies and provider
+connectivity have been reviewed.
+
+### Configuration and security
+
+The Configuration view groups General, Collectors, Threat Intelligence, Policies, Response, LLM
+and Users. YAML is schema-validated and written atomically. Use a long API key, restrict port
+exposure, mount only required sockets, and never commit `.env` or provider credentials. Viewer,
+analyst and administrator roles constrain operational access; all changes are recorded in the
+audit log.
+
 The standalone configuration starts successfully without HAProxy and binds only to localhost.
 Set a long `SENTINEL_API_KEY` before exposing the API. Requests to all endpoints except health
 then require `Authorization: Bearer <token>`. No secret belongs in Git; `.env` is ignored.

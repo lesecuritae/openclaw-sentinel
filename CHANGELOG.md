@@ -5,6 +5,14 @@ stable release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-05
+
+### Added
+
+- First-start setup status and administrator bootstrap flow.
+- Configuration areas, deployment examples, backup/export guidance and release documentation.
+- Security operations users, audit trail and reporting surfaces.
+
 ## [0.4.5] - 2026-09-04
 
 ### Added

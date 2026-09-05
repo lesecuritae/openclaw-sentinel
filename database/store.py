@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
   timestamp TEXT NOT NULL, before_state TEXT NOT NULL DEFAULT '{}',
   after_state TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL, credential_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS setup_state (
+  id INTEGER PRIMARY KEY CHECK(id=1), initialized_at TEXT, version TEXT
+);
 CREATE TABLE IF NOT EXISTS threat_intelligence (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, source TEXT NOT NULL,
   result INTEGER NOT NULL, score INTEGER NOT NULL, reason TEXT NOT NULL,
@@ -388,6 +396,35 @@ class SecurityStore:
             item["after_state"] = json.loads(item["after_state"] or "{}")
             result.append(item)
         return result
+
+    def setup_initialized(self) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM setup_state WHERE id=1").fetchone() is not None
+
+    def initialize_setup(
+        self, username: str, role: str, credential_hash: str, version: str
+    ) -> bool:
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM setup_state WHERE id=1").fetchone():
+                return False
+            now = datetime.now(UTC).isoformat()
+            db.execute(
+                "INSERT INTO users(username,role,credential_hash,created_at) VALUES(?,?,?,?)",
+                (username, role, credential_hash, now),
+            )
+            db.execute(
+                "INSERT INTO setup_state(id,initialized_at,version) VALUES(1,?,?)", (now, version)
+            )
+        return True
+
+    def users(self) -> list[dict]:
+        with self.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT id,username,role,created_at,enabled FROM users ORDER BY username"
+                ).fetchall()
+            ]
 
     def daily_report(self) -> dict:
         return {

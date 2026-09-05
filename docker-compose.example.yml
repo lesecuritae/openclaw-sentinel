@@ -1,0 +1,15 @@
+services:
+  sentinel:
+    image: ghcr.io/lesecuritae/openclaw-sentinel:0.5.0
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - sentinel-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  sentinel-data:

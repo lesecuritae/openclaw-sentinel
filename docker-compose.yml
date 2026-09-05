@@ -1,7 +1,7 @@
 services:
   sentinel:
     build: .
-    image: openclaw-sentinel:0.4.5
+    image: openclaw-sentinel:0.5.0
     restart: unless-stopped
     environment:
       DATABASE_PATH: ${DATABASE_PATH:-/data/sentinel.db}
@@ -16,6 +16,8 @@ services:
       HAPROXY_REQUEST_HOST: ${HAPROXY_REQUEST_HOST:-0.0.0.0}
       HAPROXY_REQUEST_PORT: ${HAPROXY_REQUEST_PORT:-1514}
       ACTIONS_ENABLED: ${ACTIONS_ENABLED:-false}
+      RESPONSE_DRY_RUN: ${RESPONSE_DRY_RUN:-true}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       SENTINEL_API_KEY: ${SENTINEL_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
       MODEL: ${MODEL:-}

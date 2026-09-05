@@ -20,6 +20,7 @@ import PoliciesPage from "./pages/Policies";
 import ActionsPage from "./pages/Actions";
 import AIAnalysisPage from "./pages/AIAnalysis";
 import { OperationsPage } from "./pages/Operations";
+import ConfigurationPage from "./pages/Configuration";
 import { useAuth } from "./lib/auth";
 
 const navItems = [
@@ -41,6 +42,7 @@ const navItems = [
   { to: "/audit-log", label: "Audit Log", icon: Lock },
   { to: "/reports/daily", label: "Reports", icon: Activity },
   { to: "/users", label: "Users", icon: ShieldCheck },
+  { to: "/configuration", label: "Configuration", icon: Lock },
 ];
 
 export default function App() {
@@ -149,6 +151,7 @@ export default function App() {
             <Route path="/audit-log" element={<OperationsPage kind="audit-log" />} />
             <Route path="/reports/daily" element={<OperationsPage kind="reports/daily" />} />
             <Route path="/users" element={<OperationsPage kind="users" />} />
+            <Route path="/configuration" element={<ConfigurationPage />} />
           </Routes>
         </div>
         <footer className="max-w-6xl mx-auto px-4 md:px-8 py-6 text-xs text-slate-500 border-t border-slate-900">

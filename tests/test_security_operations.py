@@ -18,6 +18,17 @@ def test_audit_before_after_round_trip(tmp_path):
     assert entry["after_state"] == {"x": 2}
 
 
+def test_fresh_setup_is_single_use(tmp_path):
+    from database.store import SecurityStore
+
+    store = SecurityStore(tmp_path / "fresh.db")
+    assert not store.setup_initialized()
+    assert store.initialize_setup("admin", "administrator", "hash", "0.5.0")
+    assert store.setup_initialized()
+    assert not store.initialize_setup("other", "administrator", "hash2", "0.5.0")
+    assert store.users()[0]["username"] == "admin"
+
+
 def test_config_export_backup_import(tmp_path):
     import shutil
     from pathlib import Path
