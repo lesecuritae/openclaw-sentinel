@@ -117,8 +117,8 @@ class SentinelService:
                 self.store.observe_baseline(event.service, f"event:{event.event_type}")
                 if event.method:
                     self.store.observe_baseline(event.service, f"method:{event.method.upper()}")
-            result = await self._act(assessment)
             expires_at = self.store.action_expiry(assessment.action)
+            result = await self._act(assessment, expires_at)
             self.store.add_action(
                 event.ip,
                 assessment.action,
@@ -129,6 +129,7 @@ class SentinelService:
                 policy_rule=str(
                     self.policy.explain(assessment, context).get("rule") or "threshold"
                 ),
+                result=result.detail,
             )
         if self.event_publisher:
             self.event_publisher(
@@ -164,7 +165,7 @@ class SentinelService:
         self.store.add_integrity_finding(finding, event.event_id)
         return assessment
 
-    async def _act(self, assessment: RiskAssessment) -> ActionResult:
+    async def _act(self, assessment: RiskAssessment, expires_at: str | None = None) -> ActionResult:
         if self.dry_run:
             return ActionResult(
                 action=assessment.action,
@@ -174,10 +175,12 @@ class SentinelService:
                 detail=self.action_preview(assessment),
             )
         if assessment.action == Action.BLOCK:
-            return await self.haproxy.block(assessment.ip)
+            return await self.haproxy.block(assessment.ip, expires_at)
         if assessment.action == Action.CHALLENGE:
             return await self.anubis.challenge(assessment.ip)
         if assessment.action in {Action.LOG_ONLY, Action.ALERT, Action.RATE_LIMIT}:
+            if assessment.action == Action.RATE_LIMIT:
+                return await self.haproxy.rate_limit(assessment.ip, expires_at=expires_at)
             return ActionResult(
                 action=assessment.action,
                 ip=assessment.ip,

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS ip_profile (
 CREATE TABLE IF NOT EXISTS actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL,
   action TEXT NOT NULL, reason TEXT NOT NULL, provider TEXT NOT NULL, applied INTEGER NOT NULL,
-  expires_at TEXT, policy_rule TEXT
+  expires_at TEXT, policy_rule TEXT, result TEXT
 );
 CREATE TABLE IF NOT EXISTS trusted_entities (
   id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL,
@@ -110,7 +110,7 @@ class SecurityStore:
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
         action_columns = {row["name"] for row in db.execute("PRAGMA table_info(actions)")}
-        for name in ("expires_at", "policy_rule"):
+        for name in ("expires_at", "policy_rule", "result"):
             if name not in action_columns:
                 db.execute(f"ALTER TABLE actions ADD COLUMN {name} TEXT")
         event_columns = {row["name"] for row in db.execute("PRAGMA table_info(events)")}
@@ -334,12 +334,13 @@ class SecurityStore:
         applied: bool,
         expires_at: str | None = None,
         policy_rule: str | None = None,
+        result: str = "",
     ) -> None:
         with self.connect() as db:
             db.execute(
                 """INSERT INTO actions(timestamp,ip,action,reason,provider,applied,
-                expires_at,policy_rule)
-                VALUES(?,?,?,?,?,?,?,?)""",
+                expires_at,policy_rule,result)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
                     datetime.now(UTC).isoformat(),
                     ip,
@@ -349,8 +350,35 @@ class SecurityStore:
                     int(applied),
                     expires_at,
                     policy_rule,
+                    result,
                 ),
             )
+
+    def actions(self, limit: int = 100) -> list[dict]:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM actions ORDER BY timestamp DESC LIMIT ?", (min(max(limit, 1), 1000),)
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["expired"] = bool(item.get("expires_at") and item["expires_at"] <= now)
+            item["active"] = bool(
+                item["applied"] and not item["expired"] and item["action"] != "allow"
+            )
+            result.append(item)
+        return result
+
+    def revoke_action(self, action_id: int) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM actions WHERE id=?", (action_id,)).fetchone()
+            if not row:
+                return None
+            db.execute("UPDATE actions SET applied=0,result=? WHERE id=?", ("revoked", action_id))
+        item = dict(row)
+        item.update({"applied": 0, "result": "revoked", "active": False})
+        return item
 
     @staticmethod
     def action_duration_minutes(action: Action) -> int:

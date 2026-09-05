@@ -205,6 +205,24 @@ def policies(request: Request):
     }
 
 
+@router.get("/actions", dependencies=secured)
+def actions(request: Request, limit: int = Query(100, ge=1, le=500)):
+    return {"actions": request.app.state.store.actions(limit)}
+
+
+@router.post("/actions/{action_id}/revoke", dependencies=secured)
+async def revoke_action(request: Request, action_id: int):
+    action = request.app.state.store.actions(1000)
+    selected = next((item for item in action if item["id"] == action_id), None)
+    if not selected:
+        raise HTTPException(status_code=404, detail="action not found")
+    if (not request.app.state.settings.response_dry_run
+            and selected["action"] in {"block", "rate_limit"} and selected["ip"]):
+        await request.app.state.service.haproxy.unblock(selected["ip"])
+    result = request.app.state.store.revoke_action(action_id)
+    return result
+
+
 @router.post("/policies/test", dependencies=secured)
 def test_policy(request: Request, payload: dict):
     score = int(payload.get("risk_score", 0))

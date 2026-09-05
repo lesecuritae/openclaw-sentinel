@@ -45,3 +45,24 @@ class HAProxyActionAdapter:
             applied=True,
             detail=response.strip(),
         )
+
+    async def rate_limit(
+        self, ip: str, requests_per_minute: int = 60, expires_at: str | None = None
+    ) -> ActionResult:
+        address = str(ipaddress.ip_address(ip))
+        if not self.enabled:
+            return ActionResult(
+                action=Action.RATE_LIMIT,
+                ip=address,
+                provider="haproxy",
+                applied=False,
+                detail="actions disabled",
+            )
+        response = await self.runtime.command(f"set rate-limit {address} {requests_per_minute}")
+        return ActionResult(
+            action=Action.RATE_LIMIT,
+            ip=address,
+            provider="haproxy",
+            applied=True,
+            detail=f"{response.strip()}; expires_at={expires_at or 'none'}",
+        )

@@ -40,6 +40,8 @@ class SecurityTools:
                 "event_type": "string",
                 "source": "string",
             },
+            "security.get_actions": {"limit": "integer"},
+            "security.revoke_action": {"action_id": "integer"},
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -59,6 +61,7 @@ class SecurityTools:
             "security.explain_action": ["risk_score"],
             "security.test_policy": ["risk_score"],
             "security.add_trusted_entity": ["entity_type", "value", "reason"],
+            "security.revoke_action": ["action_id"],
             "security.check_ip_reputation": ["ip"],
             "security.get_ip_history": ["ip"],
             "security.get_device_profile": ["device_id"],
@@ -209,6 +212,20 @@ class SecurityTools:
                 }
             )
             return result
+        if name == "security.get_actions":
+            return self.store.actions(args.get("limit", 100))
+        if name == "security.revoke_action":
+            selected = next(
+                (item for item in self.store.actions(1000) if item["id"] == args["action_id"]), None
+            )
+            if not selected:
+                raise KeyError("action not found")
+            if (
+                not getattr(self.service, "dry_run", True)
+                and selected["action"] in {"block", "rate_limit"}
+            ):
+                await self.service.haproxy.unblock(selected["ip"])
+            return self.store.revoke_action(args["action_id"])
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")
