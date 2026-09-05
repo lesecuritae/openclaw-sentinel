@@ -1,5 +1,6 @@
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,28 @@ class ConfigManager:
                 os.unlink(temporary)
             raise
         return {"updated": True, "restart_required": True}
+
+    def export(self) -> dict[str, Any]:
+        return {name: self.read(name) for name in self.targets}
+
+    def backup(self, destination: Path | None = None) -> Path:
+        target = destination or next(iter(self.targets.values()))[0].parent / "backups"
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / f"sentinel-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
+        path.write_text(yaml.safe_dump(self.export(), sort_keys=False), encoding="utf-8")
+        return path
+
+    def import_config(self, payload: dict[str, Any]) -> dict[str, bool]:
+        validated = {
+            name: self.targets[name][1].model_validate(payload[name]).model_dump(mode="python")
+            for name in self.targets
+            if name in payload
+        }
+        if set(validated) != set(self.targets):
+            raise ValueError("configuration export must contain rules, policy and intelligence")
+        for name, data in validated.items():
+            self.update(name, data)
+        return {"imported": True, "restart_required": True}
 
     def _target(self, name: str) -> tuple[Path, type[BaseModel]]:
         try:

@@ -131,6 +131,7 @@ app.state.service = service
 app.state.tools = tools
 app.state.runtime = runtime
 app.state.config_manager = ConfigManager(settings)
+service.config_manager = app.state.config_manager
 app.state.web_sessions = web_sessions
 if settings.allowed_origins:
     app.add_middleware(

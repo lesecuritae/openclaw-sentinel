@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS trusted_entities (
   expires_at TEXT, enabled INTEGER NOT NULL DEFAULT 1,
   UNIQUE(entity_type, value)
 );
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, action TEXT NOT NULL,
+  timestamp TEXT NOT NULL, before_state TEXT NOT NULL DEFAULT '{}',
+  after_state TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS threat_intelligence (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, source TEXT NOT NULL,
   result INTEGER NOT NULL, score INTEGER NOT NULL, reason TEXT NOT NULL,
@@ -353,6 +358,44 @@ class SecurityStore:
                     result,
                 ),
             )
+
+    def add_audit(
+        self, username: str, action: str, before: dict | None = None, after: dict | None = None
+    ) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO audit_log(username,action,timestamp,before_state,after_state) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    username,
+                    action,
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(before or {}),
+                    json.dumps(after or {}),
+                ),
+            )
+
+    def audit_log(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?",
+                (min(max(limit, 1), 1000),),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["before_state"] = json.loads(item["before_state"] or "{}")
+            item["after_state"] = json.loads(item["after_state"] or "{}")
+            result.append(item)
+        return result
+
+    def daily_report(self) -> dict:
+        return {
+            "events_24h": self.event_count_24h(),
+            "incidents": self.incidents(100),
+            "risk_profiles": self.profile_summary(100),
+            "actions": self.actions(100),
+        }
 
     def actions(self, limit: int = 100) -> list[dict]:
         now = datetime.now(UTC).isoformat()

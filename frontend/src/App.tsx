@@ -19,6 +19,7 @@ import SystemIntegrityPage from "./pages/SystemIntegrity";
 import PoliciesPage from "./pages/Policies";
 import ActionsPage from "./pages/Actions";
 import AIAnalysisPage from "./pages/AIAnalysis";
+import { OperationsPage } from "./pages/Operations";
 import { useAuth } from "./lib/auth";
 
 const navItems = [
@@ -37,6 +38,9 @@ const navItems = [
   { to: "/policies", label: "Policies", icon: Lock },
   { to: "/actions", label: "Actions", icon: AlertTriangle },
   { to: "/ai-analysis", label: "AI Analysis", icon: Cpu },
+  { to: "/audit-log", label: "Audit Log", icon: Lock },
+  { to: "/reports/daily", label: "Reports", icon: Activity },
+  { to: "/users", label: "Users", icon: ShieldCheck },
 ];
 
 export default function App() {
@@ -142,6 +146,9 @@ export default function App() {
             <Route path="/policies" element={<PoliciesPage />} />
             <Route path="/actions" element={<ActionsPage />} />
             <Route path="/ai-analysis" element={<AIAnalysisPage />} />
+            <Route path="/audit-log" element={<OperationsPage kind="audit-log" />} />
+            <Route path="/reports/daily" element={<OperationsPage kind="reports/daily" />} />
+            <Route path="/users" element={<OperationsPage kind="users" />} />
           </Routes>
         </div>
         <footer className="max-w-6xl mx-auto px-4 md:px-8 py-6 text-xs text-slate-500 border-t border-slate-900">

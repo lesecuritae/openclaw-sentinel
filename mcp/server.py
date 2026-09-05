@@ -44,6 +44,8 @@ class SecurityTools:
             "security.revoke_action": {"action_id": "integer"},
             "security.analyze_ip": {"ip": "string"},
             "security.summarize_events": {"ip": "string"},
+            "security.get_audit_log": {"limit": "integer"},
+            "security.export_config": {},
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -254,9 +256,18 @@ class SecurityTools:
             incidents = self.store.incidents()
             return {
                 "incidents": incidents,
+                "report": self.store.daily_report(),
                 "analysis": await self._safe_llm(self.llm.summarize_events(incidents)),
                 "profiles": "available per IP",
             }
+        if name == "security.get_audit_log":
+            return self.store.audit_log(args.get("limit", 100))
+        if name == "security.export_config":
+            return (
+                self.service.config_manager.export()
+                if hasattr(self.service, "config_manager")
+                else {"status": "available via API"}
+            )
         raise KeyError(f"unknown tool: {name}")
 
     async def _safe_llm(self, awaitable):

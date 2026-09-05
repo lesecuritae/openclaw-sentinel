@@ -13,6 +13,7 @@ from core.api.v1.schemas import (
     WebLogin,
 )
 from core.config_manager import UnknownConfigurationError
+from core.permissions import Role, current_role, require_role
 
 router = APIRouter(prefix="/api/v1")
 
@@ -66,6 +67,7 @@ def valid_ip(value: str) -> str:
 
 @router.get("/dashboard", response_model=DashboardSummary, dependencies=secured)
 def dashboard(request: Request):
+    require_role(request, Role.VIEWER)
     store = request.app.state.store
     profiles = store.profile_summary(500)
     return DashboardSummary(
@@ -103,6 +105,7 @@ def incidents(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
 ):
+    require_role(request, Role.VIEWER)
     return Page(
         items=request.app.state.store.incidents_paged(limit, offset),
         limit=limit,
@@ -142,6 +145,7 @@ def incident_history(request: Request, incident_id: str):
 
 @router.patch("/incidents/{incident_id}", dependencies=secured)
 def update_incident(request: Request, incident_id: str, update: dict):
+    require_role(request, Role.ANALYST)
     try:
         result = request.app.state.store.update_incident_status(
             incident_id, str(update.get("status", "")), str(update.get("note", ""))
@@ -169,6 +173,7 @@ def ip_detail(request: Request, ip: str):
 
 @router.get("/config/{name}", dependencies=secured)
 def get_config(request: Request, name: str):
+    require_role(request, Role.ADMINISTRATOR)
     try:
         return {"name": name, "value": request.app.state.config_manager.read(name)}
     except UnknownConfigurationError:
@@ -179,8 +184,17 @@ def get_config(request: Request, name: str):
 
 @router.put("/config/{name}", dependencies=secured)
 def update_config(request: Request, name: str, update: ConfigUpdate):
+    require_role(request, Role.ADMINISTRATOR)
+    before = request.app.state.config_manager.read(name)
     try:
-        return request.app.state.config_manager.update(name, update.value)
+        result = request.app.state.config_manager.update(name, update.value)
+        request.app.state.store.add_audit(
+            request.headers.get("x-sentinel-user", "api"),
+            f"config.update:{name}",
+            before,
+            update.value,
+        )
+        return result
     except UnknownConfigurationError:
         raise HTTPException(status_code=404, detail="unknown configuration") from None
     except ValidationError as exc:
@@ -205,6 +219,7 @@ def risk_policy(request: Request):
 
 @router.get("/policies", dependencies=secured)
 def policies(request: Request):
+    require_role(request, Role.ANALYST)
     config = request.app.state.settings.load_policy()
     return {
         "rules": config.rules,
@@ -219,11 +234,13 @@ def policies(request: Request):
 
 @router.get("/actions", dependencies=secured)
 def actions(request: Request, limit: int = Query(100, ge=1, le=500)):
+    require_role(request, Role.ANALYST)
     return {"actions": request.app.state.store.actions(limit)}
 
 
 @router.post("/actions/{action_id}/revoke", dependencies=secured)
 async def revoke_action(request: Request, action_id: int):
+    require_role(request, Role.ANALYST)
     action = request.app.state.store.actions(1000)
     selected = next((item for item in action if item["id"] == action_id), None)
     if not selected:
@@ -235,6 +252,54 @@ async def revoke_action(request: Request, action_id: int):
     ):
         await request.app.state.service.haproxy.unblock(selected["ip"])
     result = request.app.state.store.revoke_action(action_id)
+    return result
+
+
+@router.get("/audit-log", dependencies=secured)
+def audit_log(request: Request, limit: int = Query(100, ge=1, le=500)):
+    require_role(request, Role.ANALYST)
+    return {"entries": request.app.state.store.audit_log(limit)}
+
+
+@router.get("/reports/daily", dependencies=secured)
+def daily_report(request: Request):
+    require_role(request, Role.ANALYST)
+    return request.app.state.store.daily_report()
+
+
+@router.get("/users", dependencies=secured)
+def users(request: Request):
+    require_role(request, Role.ADMINISTRATOR)
+    return {"roles": [role.value for role in Role], "current_role": current_role(request).value}
+
+
+@router.get("/config/export", dependencies=secured)
+def export_config(request: Request):
+    require_role(request, Role.ADMINISTRATOR)
+    return request.app.state.config_manager.export()
+
+
+@router.post("/config/backup", dependencies=secured)
+def backup_config(request: Request):
+    require_role(request, Role.ADMINISTRATOR)
+    path = request.app.state.config_manager.backup()
+    request.app.state.store.add_audit(
+        request.headers.get("x-sentinel-user", "api"), "config.backup", {}, {"path": str(path)}
+    )
+    return {"backed_up": True, "path": str(path)}
+
+
+@router.post("/config/import", dependencies=secured)
+def import_config(request: Request, payload: dict):
+    require_role(request, Role.ADMINISTRATOR)
+    before = request.app.state.config_manager.export()
+    try:
+        result = request.app.state.config_manager.import_config(payload)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    request.app.state.store.add_audit(
+        request.headers.get("x-sentinel-user", "api"), "config.import", before, payload
+    )
     return result
 
 
