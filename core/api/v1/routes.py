@@ -237,6 +237,15 @@ def services_dashboard(
     )
 
 
+@router.get("/integrity", dependencies=secured)
+def integrity(request: Request, limit: int = Query(100, ge=1, le=500), status: str | None = None):
+    store = request.app.state.store
+    return {
+        "summary": store.integrity_summary(),
+        "findings": store.integrity_findings(limit, status),
+    }
+
+
 @router.get("/mcp", dependencies=secured)
 def mcp_status(request: Request):
     return {

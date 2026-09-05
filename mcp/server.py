@@ -14,6 +14,8 @@ class SecurityTools:
             "security.get_risk_score": {"ip": "string"},
             "security.explain_event": {"event_id": "string"},
             "security.get_services": {},
+            "security.get_integrity": {"status": "string", "limit": "integer"},
+            "security.get_integrity_summary": {},
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -125,6 +127,15 @@ class SecurityTools:
                 ),
                 "rolling_window_hours": rolling_window_hours,
             }
+        if name == "security.get_integrity":
+            return {
+                "summary": self.store.integrity_summary(),
+                "findings": self.store.integrity_findings(
+                    args.get("limit", 100), args.get("status")
+                ),
+            }
+        if name == "security.get_integrity_summary":
+            return self.store.integrity_summary()
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")

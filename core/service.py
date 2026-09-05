@@ -44,8 +44,10 @@ class SentinelService:
                 return [item for item in candidates if item.source != "docker"]
             actor = event.metadata.get("actor_id") if event.source == "docker" else None
             return [
-                item for item in candidates
-                if item.source == event.source and item.service == event.service
+                item
+                for item in candidates
+                if item.source == event.source
+                and item.service == event.service
                 and (not actor or item.metadata.get("actor_id") == actor)
             ]
 
@@ -63,9 +65,7 @@ class SentinelService:
                 )
             )
         if device_profile:
-            adaptive_factors.extend(
-                self.geo_time.explain_geo_time_mismatch(event, device_profile)
-            )
+            adaptive_factors.extend(self.geo_time.explain_geo_time_mismatch(event, device_profile))
             adaptive_factors.extend(self.client.analyze_client(event, device_profile))
             trust_factor = self.trust.get_trust_factor(device_profile)
             if trust_factor.score:
@@ -74,9 +74,7 @@ class SentinelService:
         reputation = []
         if self.intelligence and not infrastructure_event:
             reputation = await self.intelligence.check(event.ip)
-        detections = self.detection.evaluate(
-            event, history
-        )
+        detections = self.detection.evaluate(event, history)
         assessment = self.risk.assess(event.ip, detections, reputation, adaptive_factors)
         assessment.action = self.policy.decide(assessment)
         self.store.update_event_score(event.event_id, assessment.risk_score)
@@ -113,6 +111,27 @@ class SentinelService:
                     "factors": [factor.model_dump() for factor in assessment.factors],
                 }
             )
+        return assessment
+
+    async def process_integrity(self, finding) -> RiskAssessment:
+        """Submit a read-only integrity finding through the event pipeline.
+
+        Integrity events use an infrastructure identity, so the normal action path
+        cannot create profiles, blocks, challenges, or other enforcement actions.
+        The finding remains separately queryable from the integrity store.
+        """
+        event = SecurityEvent(
+            source="integrity",
+            ip="unknown",
+            service=finding.subject,
+            event_type=finding.kind,
+            severity=finding.severity,
+            metadata={"status": finding.status, "score": finding.score, **finding.details},
+        )
+        assessment = await self.process(event)
+        # Keep the public assessment explicitly non-enforcing as a second guard.
+        assessment.action = Action.ALLOW
+        self.store.add_integrity_finding(finding, event.event_id)
         return assessment
 
     async def _act(self, assessment: RiskAssessment) -> ActionResult:

@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS behavior_anomalies (
 );
 CREATE INDEX IF NOT EXISTS behavior_anomalies_lookup
   ON behavior_anomalies(ip, device_id, service, timestamp);
+CREATE TABLE IF NOT EXISTS integrity_findings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL,
+  kind TEXT NOT NULL, subject TEXT NOT NULL, status TEXT NOT NULL,
+  severity TEXT NOT NULL, score INTEGER NOT NULL, details TEXT NOT NULL DEFAULT '{}',
+  event_id TEXT
+);
+CREATE INDEX IF NOT EXISTS integrity_findings_time ON integrity_findings(timestamp);
 
 """
 
@@ -175,6 +182,48 @@ class SecurityStore:
                     event.tls_fingerprint,
                 ),
             )
+
+    def add_integrity_finding(self, finding, event_id: str | None = None) -> None:
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO integrity_findings
+                (timestamp,kind,subject,status,severity,score,details,event_id)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    finding.kind,
+                    finding.subject,
+                    finding.status,
+                    finding.severity,
+                    finding.score,
+                    json.dumps(finding.details, separators=(",", ":")),
+                    event_id,
+                ),
+            )
+
+    def integrity_findings(self, limit: int = 100, status: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM integrity_findings"
+        args: list[object] = []
+        if status:
+            sql += " WHERE status=?"
+            args.append(status)
+        sql += " ORDER BY timestamp DESC LIMIT ?"
+        args.append(min(max(limit, 1), 1000))
+        with self.connect() as db:
+            rows = db.execute(sql, args).fetchall()
+        return [{**dict(row), "details": json.loads(row["details"] or "{}")} for row in rows]
+
+    def integrity_summary(self) -> dict:
+        with self.connect() as db:
+            total = db.execute("SELECT COUNT(*) FROM integrity_findings").fetchone()[0]
+            open_count = db.execute(
+                "SELECT COUNT(*) FROM integrity_findings WHERE status IN "
+                "('changed','missing','vulnerable','unreadable','new')"
+            ).fetchone()[0]
+            high = db.execute(
+                "SELECT COUNT(*) FROM integrity_findings WHERE severity IN ('high','critical')"
+            ).fetchone()[0]
+        return {"total": total, "open": open_count, "high_severity": high}
 
     def update_event_score(self, event_id: str, score: int) -> None:
         with self.connect() as db:
@@ -668,8 +717,7 @@ class SecurityStore:
             service = row["service"]
             # Derive observed status from latest lifecycle/backend evidence
             latest_row = db.execute(
-                "SELECT event_type FROM events WHERE service = ? "
-                "ORDER BY timestamp DESC LIMIT 1",
+                "SELECT event_type FROM events WHERE service = ? ORDER BY timestamp DESC LIMIT 1",
                 (service,),
             ).fetchone()
             latest_event_type = latest_row["event_type"] if latest_row else "unknown"

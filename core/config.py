@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     service_log_collector_enabled: bool = False
     auth_log_paths: str = "/var/log/auth.log"
     service_log_path: str = ""
+    integrity_collector_enabled: bool = False
+    integrity_file_paths: str = ""
+    integrity_package_report: str = ""
     sentinel_api_key: str = ""
     llm_provider: str = "disabled"
     openrouter_api_key: str = ""
@@ -121,3 +124,7 @@ class Settings(BaseSettings):
         return [
             p.strip() for p in self.image_patterns.split(",") if p.strip()
         ]
+
+    @property
+    def important_file_paths(self) -> list[str]:
+        return [p.strip() for p in self.integrity_file_paths.split(",") if p.strip()]

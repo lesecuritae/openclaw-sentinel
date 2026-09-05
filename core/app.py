@@ -13,6 +13,7 @@ from actions.haproxy import HAProxyActionAdapter
 from collectors.auth import LinuxAuthCollector
 from collectors.docker import DockerEventCollector
 from collectors.haproxy import HAProxyCollector, HAProxyRequestCollector, HAProxyRuntimeClient
+from collectors.integrity import IntegrityCollector
 from collectors.service import ServiceLogCollector
 from core.api.v1 import api_router, ws_router
 from core.api.v1.ws.events import manager as event_manager
@@ -104,11 +105,19 @@ async def lifespan(_: FastAPI):
     if settings.service_log_collector_enabled:
         tasks.append(
             asyncio.create_task(
-                ServiceLogCollector(
-                    enabled=True, log_path=settings.service_log_path or None
-                ).run(service.process)
+                ServiceLogCollector(enabled=True, log_path=settings.service_log_path or None).run(
+                    service.process
+                )
             )
         )
+    if settings.integrity_collector_enabled:
+        collector = IntegrityCollector(
+            api_url=settings.docker_api_url,
+            file_paths=settings.important_file_paths,
+            package_report=settings.integrity_package_report,
+            interval=max(settings.collector_interval_seconds, 30),
+        )
+        tasks.append(asyncio.create_task(collector.run(service.process_integrity)))
     yield
     for task in tasks:
         task.cancel()
