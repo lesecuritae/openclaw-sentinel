@@ -18,13 +18,26 @@ def test_audit_before_after_round_trip(tmp_path):
     assert entry["after_state"] == {"x": 2}
 
 
-def test_config_export_backup_import():
+def test_config_export_backup_import(tmp_path):
+    import shutil
+    from pathlib import Path
+
     from core.config import Settings
     from core.config_manager import ConfigManager
 
-    manager = ConfigManager(Settings())
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    for name in ("rules.yaml", "policy.yaml", "intelligence.yaml"):
+        shutil.copy(Path("config") / name, config_dir / name)
+    manager = ConfigManager(
+        Settings(
+            rules_path=config_dir / "rules.yaml",
+            policy_path=config_dir / "policy.yaml",
+            intelligence_path=config_dir / "intelligence.yaml",
+        )
+    )
     exported = manager.export()
-    backup = manager.backup()
+    backup = manager.backup(tmp_path)
     assert backup.exists()
     assert set(exported) == {"rules", "policy", "intelligence"}
     assert manager.import_config(exported)["imported"] is True
