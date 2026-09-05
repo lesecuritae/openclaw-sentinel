@@ -11,6 +11,8 @@ class SecurityTools:
             "security.check_ip": {"ip": "string"},
             "security.get_events": {"ip": "string"},
             "security.get_incidents": {},
+            "security.explain_incident": {"incident_id": "string"},
+            "security.get_incident_history": {"incident_id": "string"},
             "security.get_risk_score": {"ip": "string"},
             "security.explain_event": {"event_id": "string"},
             "security.get_services": {},
@@ -30,6 +32,8 @@ class SecurityTools:
             "security.check_ip": ["ip"],
             "security.get_risk_score": ["ip"],
             "security.explain_event": ["event_id"],
+            "security.explain_incident": ["incident_id"],
+            "security.get_incident_history": ["incident_id"],
             "security.check_ip_reputation": ["ip"],
             "security.get_ip_history": ["ip"],
             "security.get_device_profile": ["device_id"],
@@ -66,6 +70,16 @@ class SecurityTools:
             return [e.model_dump(mode="json") for e in self.store.events(ip=args.get("ip"))]
         if name == "security.get_incidents":
             return self.store.incidents()
+        if name == "security.explain_incident":
+            incident = self.store.incident(args["incident_id"])
+            if not incident:
+                raise KeyError("incident not found")
+            return incident
+        if name == "security.get_incident_history":
+            return {
+                "incident_id": args["incident_id"],
+                "timeline": self.store.incident_history(args["incident_id"]),
+            }
         if name == "security.check_ip_reputation":
             if not self.intelligence:
                 return []

@@ -110,6 +110,37 @@ def incidents(
     )
 
 
+@router.get("/incidents/{incident_id}", dependencies=secured)
+def incident_detail(request: Request, incident_id: str):
+    incident = request.app.state.store.incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return incident
+
+
+@router.get("/incidents/{incident_id}/history", dependencies=secured)
+def incident_history(request: Request, incident_id: str):
+    if not request.app.state.store.incident(incident_id):
+        raise HTTPException(status_code=404, detail="incident not found")
+    return {
+        "incident_id": incident_id,
+        "timeline": request.app.state.store.incident_history(incident_id),
+    }
+
+
+@router.patch("/incidents/{incident_id}", dependencies=secured)
+def update_incident(request: Request, incident_id: str, update: dict):
+    try:
+        result = request.app.state.store.update_incident_status(
+            incident_id, str(update.get("status", "")), str(update.get("note", ""))
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if not result:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return result
+
+
 @router.get("/ip/{ip}", dependencies=secured)
 def ip_detail(request: Request, ip: str):
     address = valid_ip(ip)

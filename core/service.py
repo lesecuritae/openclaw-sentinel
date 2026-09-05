@@ -79,6 +79,19 @@ class SentinelService:
         assessment.action = self.policy.decide(assessment)
         self.store.update_event_score(event.event_id, assessment.risk_score)
         self.store.add_anomalies(event, adaptive_factors)
+        if assessment.risk_score >= 70 or event.severity.value in {"high", "critical"}:
+            factors = [factor.model_dump(mode="json") for factor in assessment.factors]
+            existing = self.store.open_incident(event.source, event.service)
+            if existing:
+                self.store.record_incident_risk(existing["id"], assessment.risk_score, factors)
+            else:
+                self.store.create_incident(
+                    source=event.source,
+                    component=event.service,
+                    risk_score=assessment.risk_score,
+                    factors=factors,
+                    event_id=event.event_id,
+                )
 
         if event.ip and not infrastructure_event:
             self.store.update_profile(assessment)

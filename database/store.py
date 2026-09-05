@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS integrity_findings (
   event_id TEXT
 );
 CREATE INDEX IF NOT EXISTS integrity_findings_time ON integrity_findings(timestamp);
+CREATE TABLE IF NOT EXISTS incidents (
+  id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  status TEXT NOT NULL, priority TEXT NOT NULL, source TEXT NOT NULL,
+  component TEXT NOT NULL, risk_score INTEGER NOT NULL, factors TEXT NOT NULL DEFAULT '[]',
+  timeline TEXT NOT NULL DEFAULT '[]', recommendations TEXT NOT NULL DEFAULT '[]',
+  event_id TEXT
+);
+CREATE INDEX IF NOT EXISTS incidents_status_time ON incidents(status, updated_at);
 
 """
 
@@ -316,7 +324,126 @@ class SecurityStore:
                 (datetime.now(UTC).isoformat(), ip, action.value, reason, provider, int(applied)),
             )
 
+    def create_incident(
+        self,
+        *,
+        source: str,
+        component: str,
+        risk_score: int,
+        factors: list | None = None,
+        recommendations: list | None = None,
+        event_id: str | None = None,
+        priority: str | None = None,
+    ) -> dict:
+        now = datetime.now(UTC).isoformat()
+        incident_id = f"inc-{int(datetime.now(UTC).timestamp() * 1000000)}"
+        priority = priority or (
+            "kritisch" if risk_score >= 90 else "hoch" if risk_score >= 70 else "mittel"
+        )
+        timeline = [{"timestamp": now, "status": "neu", "note": "Incident erstellt"}]
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO incidents
+                (id,created_at,updated_at,status,priority,source,component,risk_score,factors,timeline,recommendations,event_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    incident_id,
+                    now,
+                    now,
+                    "neu",
+                    priority,
+                    source,
+                    component,
+                    max(0, min(100, risk_score)),
+                    json.dumps(factors or []),
+                    json.dumps(timeline),
+                    json.dumps(
+                        recommendations or ["Ereignis analysieren und betroffene Komponente prüfen"]
+                    ),
+                    event_id,
+                ),
+            )
+        return self.incident(incident_id)
+
+    def record_incident_risk(
+        self, incident_id: str, risk_score: int, factors: list | None = None
+    ) -> dict | None:
+        incident = self.incident(incident_id)
+        if not incident:
+            return None
+        now = datetime.now(UTC).isoformat()
+        timeline = incident["timeline"]
+        timeline.append(
+            {
+                "timestamp": now,
+                "status": incident["status"],
+                "risk_score": risk_score,
+                "note": "Risiko aktualisiert",
+            }
+        )
+        with self.connect() as db:
+            db.execute(
+                "UPDATE incidents SET risk_score=?,factors=?,updated_at=?,timeline=? WHERE id=?",
+                (
+                    max(0, min(100, risk_score)),
+                    json.dumps(factors or incident["factors"]),
+                    now,
+                    json.dumps(timeline),
+                    incident_id,
+                ),
+            )
+        return self.incident(incident_id)
+
+    def open_incident(self, source: str, component: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM incidents WHERE source=? AND component=? "
+                "AND status!='geschlossen' ORDER BY updated_at DESC LIMIT 1",
+                (source, component),
+            ).fetchone()
+        return self._incident(row) if row else None
+
+    def incident(self, incident_id: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM incidents WHERE id=?", (incident_id,)).fetchone()
+        return self._incident(row) if row else None
+
+    def update_incident_status(self, incident_id: str, status: str, note: str = "") -> dict | None:
+        allowed = {"neu", "analysiert", "bestätigt", "geschlossen"}
+        if status not in allowed:
+            raise ValueError("invalid incident status")
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as db:
+            row = db.execute("SELECT timeline FROM incidents WHERE id=?", (incident_id,)).fetchone()
+            if not row:
+                return None
+            timeline = json.loads(row["timeline"] or "[]")
+            timeline.append({"timestamp": now, "status": status, "note": note[:500]})
+            db.execute(
+                "UPDATE incidents SET status=?,updated_at=?,timeline=? WHERE id=?",
+                (status, now, json.dumps(timeline, separators=(",", ":")), incident_id),
+            )
+        return self.incident(incident_id)
+
+    def incident_history(self, incident_id: str) -> list[dict]:
+        incident = self.incident(incident_id)
+        return incident["timeline"] if incident else []
+
+    def _incident(self, row: sqlite3.Row) -> dict:
+        result = dict(row)
+        for key in ("factors", "timeline", "recommendations"):
+            result[key] = json.loads(result[key] or "[]")
+        return result
+
     def incidents(self, limit: int = 100) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM incidents ORDER BY updated_at DESC LIMIT ?",
+                (min(max(limit, 1), 1000),),
+            ).fetchall()
+        incidents = [self._incident(row) for row in rows]
+        if incidents:
+            return incidents
         with self.connect() as db:
             rows = db.execute(
                 "SELECT * FROM actions WHERE action!='allow' ORDER BY timestamp DESC LIMIT ?",
@@ -621,8 +748,14 @@ class SecurityStore:
     def incidents_paged(self, limit: int = 100, offset: int = 0) -> list[dict]:
         with self.connect() as db:
             rows = db.execute(
-                """SELECT * FROM actions WHERE action != 'allow'
-                ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
+                "SELECT * FROM incidents ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (min(max(limit, 1), 1000), max(offset, 0)),
+            ).fetchall()
+            if rows:
+                return [self._incident(row) for row in rows]
+            rows = db.execute(
+                "SELECT * FROM actions WHERE action != 'allow' "
+                "ORDER BY timestamp DESC LIMIT ? OFFSET ?",
                 (min(max(limit, 1), 1000), max(offset, 0)),
             ).fetchall()
         return [dict(row) for row in rows]
