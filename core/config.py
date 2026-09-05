@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     web_2fa_secret_file: str = ""
     web_session_ttl_seconds: int = Field(default=900, ge=60, le=86400)
 
+    # Docker allowlists passed from app / settings for collector use
+    container_patterns: str = ""
+    image_patterns: str = ""
+
     def load_rules(self) -> RulesConfig:
         return RulesConfig.model_validate(yaml.safe_load(self.rules_path.read_text()))
 
@@ -104,4 +108,16 @@ class Settings(BaseSettings):
             origin.strip().rstrip("/")
             for origin in self.cors_origin_allowlist.split(",")
             if origin.strip()
+        ]
+
+    @property
+    def allowed_containers(self) -> list[str]:
+        return [
+            p.strip() for p in self.container_patterns.split(",") if p.strip()
+        ]
+
+    @property
+    def allowed_images(self) -> list[str]:
+        return [
+            p.strip() for p in self.image_patterns.split(",") if p.strip()
         ]

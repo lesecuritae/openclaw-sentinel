@@ -263,6 +263,10 @@ The test stack binds HAProxy only to localhost. It is a traffic fixture, not a p
 deployment. Collector settings and production trust boundaries are documented in
 [Production deployment](docs/deployment.md) and [Phase 4.5](docs/backend/phase45.md).
 
+### Service adapter framework
+
+Service log collectors use configurable adapters (`VaultwardenAdapter`, `NextcloudAdapter`, `GiteaAdapter`, `PlexAdapter`) registered under `SERVICE_ADAPTERS`. No service-specific `if/else` logic exists in the core collector interface. Plex adapter has no invented login semantics; only media/session events are emitted when configured patterns match.
+
 ### Optional dashboard two-factor authentication
 
 Set `WEB_2FA_ENABLED=true`, retain a strong `SENTINEL_API_KEY`, and provide an existing base32

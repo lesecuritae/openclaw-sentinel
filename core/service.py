@@ -36,8 +36,21 @@ class SentinelService:
 
     async def process(self, event: SecurityEvent) -> RiskAssessment:
         self.store.add_event(event)
+        infrastructure_event = event.source == "docker" or event.ip == "unknown"
+
+        def history(seconds: int) -> list[SecurityEvent]:
+            candidates = self.store.recent_events(event.ip, seconds)
+            if not infrastructure_event:
+                return [item for item in candidates if item.source != "docker"]
+            actor = event.metadata.get("actor_id") if event.source == "docker" else None
+            return [
+                item for item in candidates
+                if item.source == event.source and item.service == event.service
+                and (not actor or item.metadata.get("actor_id") == actor)
+            ]
+
         device_profile = self.store.get_device_profile(event.device_id)
-        recent_events = self.store.recent_events(event.ip, 300)
+        recent_events = history(300)
         adaptive_factors = self.behavior.analyze_request_patterns(recent_events)
         adaptive_factors.extend(self.behavior.analyze_access_patterns(recent_events))
         if event.device_id and not device_profile:
@@ -59,17 +72,17 @@ class SentinelService:
                 adaptive_factors.append(trust_factor)
 
         reputation = []
-        if self.intelligence and event.ip != "unknown":
+        if self.intelligence and not infrastructure_event:
             reputation = await self.intelligence.check(event.ip)
         detections = self.detection.evaluate(
-            event, lambda seconds: self.store.recent_events(event.ip, seconds)
+            event, history
         )
         assessment = self.risk.assess(event.ip, detections, reputation, adaptive_factors)
         assessment.action = self.policy.decide(assessment)
         self.store.update_event_score(event.event_id, assessment.risk_score)
         self.store.add_anomalies(event, adaptive_factors)
 
-        if event.ip and event.ip != "unknown":
+        if event.ip and not infrastructure_event:
             self.store.update_profile(assessment)
             safe = assessment.action == Action.ALLOW and assessment.risk_score < 30
             if event.device_id:

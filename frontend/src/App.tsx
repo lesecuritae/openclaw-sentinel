@@ -2,7 +2,7 @@ import React from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
 import {
   ShieldCheck, Activity, AlertTriangle, Globe, Lock, FlaskConical,
-  Cpu, Waves, Zap, Server, Menu, X
+  Cpu, Waves, Zap, Server, Menu, X, Layers
 } from "lucide-react";
 import DashboardPage from "./pages/Dashboard";
 import LiveEventsPage from "./pages/LiveEvents";
@@ -14,6 +14,7 @@ import HAProxyPage from "./pages/HAProxy";
 import ChallengePage from "./pages/Challenge";
 import LLMPage from "./pages/LLM";
 import MCPPage from "./pages/MCP";
+import ServicesPage from "./pages/Services";
 import { useAuth } from "./lib/auth";
 
 const navItems = [
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/challenge", label: "Challenge", icon: FlaskConical },
   { to: "/llm", label: "LLM", icon: Cpu },
   { to: "/mcp", label: "MCP", icon: Waves },
+  { to: "/services", label: "Services", icon: Layers },
 ];
 
 export default function App() {
@@ -127,6 +129,7 @@ export default function App() {
             <Route path="/challenge" element={<ChallengePage />} />
             <Route path="/llm" element={<LLMPage />} />
             <Route path="/mcp" element={<MCPPage />} />
+            <Route path="/services" element={<ServicesPage />} />
           </Routes>
         </div>
         <footer className="max-w-6xl mx-auto px-4 md:px-8 py-6 text-xs text-slate-500 border-t border-slate-900">

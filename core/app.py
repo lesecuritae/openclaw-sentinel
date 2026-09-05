@@ -84,7 +84,11 @@ async def lifespan(_: FastAPI):
         tasks.append(
             asyncio.create_task(
                 DockerEventCollector(
-                    enabled=True, api_url=settings.docker_api_url
+                    enabled=True,
+                    api_url=settings.docker_api_url,
+                    allowed_containers=settings.allowed_containers,
+                    allowed_images=settings.allowed_images,
+                    settings=settings,
                 ).run(service.process)
             )
         )

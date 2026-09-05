@@ -76,6 +76,10 @@ CREATE INDEX IF NOT EXISTS behavior_anomalies_lookup
 class SecurityStore:
     def __init__(self, path: Path | str):
         self.path = Path(path)
+        self._memory_db: sqlite3.Connection | None = None
+        if str(path) == ":memory:":
+            self._memory_db = sqlite3.connect(":memory:", check_same_thread=False)
+            self._memory_db.row_factory = sqlite3.Row
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript(SCHEMA)
@@ -103,9 +107,7 @@ class SecurityStore:
             db.execute("ALTER TABLE ip_profile ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]'")
         if "factors" not in profile_columns:
             db.execute("ALTER TABLE ip_profile ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'")
-        device_columns = {
-            row["name"] for row in db.execute("PRAGMA table_info(device_profiles)")
-        }
+        device_columns = {row["name"] for row in db.execute("PRAGMA table_info(device_profiles)")}
         for name in (
             "user_agents",
             "languages",
@@ -114,13 +116,9 @@ class SecurityStore:
             "ip_history",
         ):
             if name not in device_columns:
-                db.execute(
-                    f"ALTER TABLE device_profiles ADD COLUMN {name} TEXT DEFAULT '[]'"
-                )
+                db.execute(f"ALTER TABLE device_profiles ADD COLUMN {name} TEXT DEFAULT '[]'")
         baseline_pk = [
-            row["name"]
-            for row in db.execute("PRAGMA table_info(behavior_baselines)")
-            if row["pk"]
+            row["name"] for row in db.execute("PRAGMA table_info(behavior_baselines)") if row["pk"]
         ]
         if baseline_pk == ["pattern"]:
             db.executescript(
@@ -142,6 +140,8 @@ class SecurityStore:
         db.execute("CREATE INDEX IF NOT EXISTS events_ip_path_time ON events(ip,path,timestamp)")
 
     def connect(self) -> sqlite3.Connection:
+        if self._memory_db is not None:
+            return self._memory_db
         db = sqlite3.connect(self.path)
         db.row_factory = sqlite3.Row
         return db
@@ -183,6 +183,10 @@ class SecurityStore:
     def recent_events(self, ip: str, window_seconds: int) -> list[SecurityEvent]:
         since = (datetime.now(UTC) - timedelta(seconds=window_seconds)).isoformat()
         with self.connect() as db:
+            try:
+                db.execute("SELECT 1 FROM events LIMIT 1")
+            except Exception:
+                return []
             rows = db.execute(
                 "SELECT * FROM events WHERE ip=? AND timestamp>=? ORDER BY timestamp DESC",
                 (ip, since),
@@ -417,9 +421,7 @@ class SecurityStore:
             confidence = min(0.99, positive / max(3, positive + negative))
             trusted_positive = max(0, positive - blocked_count)
             increase = (
-                min(20, trusted_positive)
-                if trusted_positive >= 10 and confidence >= 0.5
-                else 0
+                min(20, trusted_positive) if trusted_positive >= 10 and confidence >= 0.5 else 0
             )
             trust_score = max(0, min(100, 50 + increase - min(30, negative * 5)))
             serialized = [
@@ -554,9 +556,7 @@ class SecurityStore:
             ).fetchone()
         return row["c"] if row else 0
 
-    def events_paged(
-        self, ip: str | None = None, limit: int = 100, offset: int = 0
-    ) -> list[dict]:
+    def events_paged(self, ip: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
         sql = "SELECT * FROM events"
         args: list = []
         if ip:
@@ -639,6 +639,124 @@ class SecurityStore:
             if profile and ip in profile["ip_history"]:
                 profiles.append(profile)
         return profiles
+
+    def services_dashboard(self, rolling_window_hours: int = 24) -> list[dict]:
+        since = (datetime.now(UTC) - timedelta(hours=rolling_window_hours)).isoformat()
+        with self.connect() as db:
+            # Ensure events table exists (graceful for fresh/empty DB)
+            try:
+                db.execute("SELECT COUNT(*) FROM events LIMIT 1")
+            except sqlite3.OperationalError:
+                return []
+
+            rows = db.execute(
+                """SELECT service,
+                   MAX(timestamp) AS last_event,
+                   MAX(score) AS current_risk,
+                   COUNT(*) AS event_count,
+                   SUM(CASE WHEN severity IN ('high', 'critical') THEN 1 ELSE 0 END) AS warnings,
+                   MAX(timestamp) AS latest_timestamp
+                   FROM events
+                   WHERE service IS NOT NULL AND service != ''
+                   AND timestamp >= ?
+                   GROUP BY service
+                   ORDER BY last_event DESC""",
+                (since,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            service = row["service"]
+            # Derive observed status from latest lifecycle/backend evidence
+            latest_row = db.execute(
+                "SELECT event_type FROM events WHERE service = ? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (service,),
+            ).fetchone()
+            latest_event_type = latest_row["event_type"] if latest_row else "unknown"
+            observed_status = "unknown"
+            # Actual container/service lifecycle evidence from events
+            lifecycle_rows = db.execute(
+                "SELECT event_type FROM events WHERE service = ? ORDER BY timestamp DESC LIMIT 5",
+                (service,),
+            ).fetchall()
+            lifecycle_evidence = [r[0] for r in lifecycle_rows]
+            # Derive status from latest lifecycle evidence
+            if lifecycle_evidence:
+                last_type = lifecycle_evidence[0]
+                if last_type in (
+                    "service_start",
+                    "start",
+                    "start_service",
+                    "container_start",
+                    "docker_start",
+                ):
+                    observed_status = "running"
+                elif last_type in (
+                    "service_stop",
+                    "stop",
+                    "service_stop_service",
+                    "container_stop",
+                    "docker_stop",
+                ):
+                    observed_status = "stopped"
+                elif last_type in (
+                    "service_restart",
+                    "restart",
+                    "service_restart_service",
+                    "container_restart",
+                    "docker_restart",
+                ):
+                    observed_status = "restarting"
+                elif last_type in (
+                    "service_create",
+                    "create",
+                    "service_create_service",
+                    "container_create",
+                    "docker_create",
+                ):
+                    observed_status = "created"
+            else:
+                # No lifecycle evidence in rolling window; check broader events
+                broader = db.execute(
+                    "SELECT event_type FROM events WHERE service = ? "
+                    "ORDER BY timestamp DESC LIMIT 20",
+                    (service,),
+                ).fetchall()
+                broader_evidence = [r[0] for r in broader]
+                if broader_evidence:
+                    first = broader_evidence[0]
+                    if "start" in first or first.startswith("start"):
+                        observed_status = "running"
+                    elif "stop" in first or first.startswith("stop"):
+                        observed_status = "stopped"
+                    elif "restart" in first or first.startswith("restart"):
+                        observed_status = "restarting"
+                    else:
+                        observed_status = "unknown"
+                else:
+                    observed_status = "unknown"
+            results.append(
+                {
+                    "service": service,
+                    "observed_status": observed_status,
+                    "current_risk": row["current_risk"] or 0,
+                    "last_activity": row["last_event"],
+                    "last_event_type": latest_event_type or "unknown",
+                    "rolling_window_hours": rolling_window_hours,
+                    "event_count": row["event_count"] or 0,
+                    "warnings_24h": row["warnings"] or 0,
+                }
+            )
+        return results
+
+    def service_state_evidence(self, service: str, limit: int = 20) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT event_type, timestamp FROM events WHERE service = ? "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (service, min(max(limit, 1), 200)),
+            ).fetchall()
+        return [{"event_type": r[0], "timestamp": r[1]} for r in rows]
 
     @staticmethod
     def _event_dict(row) -> dict:

@@ -6,7 +6,7 @@ interface Summary { current_risk: number; events_24h: number; blocks_24h: number
 
 export default function DashboardPage() {
   const { api } = useAuth(); const [data, setData] = useState<Summary>(); const [error, setError] = useState("");
-  useEffect(() => { api.get<Summary>("/dashboard").then(setData).catch((e: Error) => setError(e.message)); }, [api]);
+  useEffect(() => { let cancelled = false; let timer: NodeJS.Timeout | null = null; const load = () => { api.get<Summary>("/dashboard").then((d) => { if (!cancelled) setData(d); }).catch((e: Error) => { if (!cancelled) setError(e.message); }); }; load(); timer = setInterval(load, 30000); return () => { cancelled = true; if (timer) clearInterval(timer); }; }, [api]);
   if (error) return <p role="alert" className="text-rose-300">{error}</p>;
   if (!data) return <p className="text-slate-400">Loading dashboard…</p>;
   const cards = [["Current risk", data.current_risk], ["Events (24h)", data.events_24h], ["Warnings (24h)", data.warnings_24h], ["Containers observed", data.container_count], ["Blocks", data.blocks_24h], ["Challenges", data.challenges_24h]];

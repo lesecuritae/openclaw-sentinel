@@ -1,69 +1,144 @@
 """Linux auth / journald collector — Phase 4.5 (bounded incremental tailing)."""
+
 import asyncio
+import json
 import logging
 from pathlib import Path
+from typing import Any
 
-from collectors.auth.adapter import AuthParser
+from collectors.auth.adapter import EXPECTED_COUNTRIES, EXPECTED_LOGIN_HOURS, AuthParser
+from core.bounded_reader import BoundedLogReader
 from core.models import SecurityEvent
 
 log = logging.getLogger(__name__)
 
 
-class BoundedLogReader:
-    """Injectable bounded log reader for testability."""
+class JournaldReader:
+    """Actual journald read-only subprocess reader using create_subprocess_exec with
+    journalctl JSON output --after-cursor --no-pager, timeout/cancel support."""
 
-    def __init__(self, paths: list[Path], max_lines: int = 1000):
-        self.paths = paths
+    def __init__(
+        self,
+        cursor: str | None = None,
+        max_lines: int = 500,
+        timeout: float = 30.0,
+    ):
+        self.cursor = cursor
         self.max_lines = max_lines
-        self._offsets: dict[str, int] = {str(p): 0 for p in paths}
+        self.timeout = timeout
+        self._cancelled = False
 
-    async def tail_incremental(self, poll_interval: float = 5.0) -> list[str]:
-        lines: list[str] = []
-        for p in self.paths:
-            if not p.exists():
-                continue
-            try:
-                with p.open("r", encoding="utf-8", errors="ignore") as f:
-                    f.seek(self._offsets[str(p)])
-                    new_lines = f.read().splitlines()
-                    self._offsets[str(p)] = f.tell()
-                    lines.extend(new_lines[: self.max_lines])
-            except Exception as exc:
-                log.warning("Failed to read %s: %s", p, exc)
-        return lines[: self.max_lines]
+    async def read_lines(self, max_lines: int = 500) -> list[str]:
+        if self._cancelled:
+            return []
+        limit = min(max_lines, self.max_lines)
+        cmd = ["journalctl", "--output=json", "--no-pager", "-n", str(limit)]
+        if self.cursor:
+            cmd[3:3] = ["--after-cursor", self.cursor]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
+            if proc.returncode != 0:
+                log.warning(
+                    "Journalctl failed (return %s): %s",
+                    proc.returncode,
+                    stderr.decode("utf-8", errors="replace"),
+                )
+                return []
+            lines: list[str] = []
+            for raw in stdout.decode("utf-8", errors="replace").splitlines()[:limit]:
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("_CURSOR"):
+                    self.cursor = str(entry["_CURSOR"])
+                message = entry.get("MESSAGE")
+                if isinstance(message, str):
+                    lines.append(message)
+            return lines
+        except TimeoutError:
+            log.warning("Journalctl read timed out after %ss", self.timeout)
+            return []
+        except Exception as exc:
+            log.warning("Journalctl subprocess error: %s", exc)
+            return []
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
 
 class LinuxAuthCollector:
-    """Configurable auth log collector (read-only, opt-in, bounded tailing, clean cancel)."""
+    """Configurable auth collector using shared BoundedLogReader (read-only, bounded,
+    clean cancel, transient errors handled without permanent kill)."""
 
     def __init__(
-        self, enabled: bool = False,
+        self,
+        enabled: bool = False,
         log_paths: list[str] | None = None,
         max_lines: int = 500,
         parser: AuthParser | None = None,
+        reader: Any = None,
     ):
         self.enabled = enabled
         self.log_paths = log_paths or ["/var/log/auth.log"]
-        self.reader = BoundedLogReader(
-            [Path(p) for p in (log_paths or ["/var/log/auth.log"])], max_lines=max_lines
-        )
+        # Use the shared core bounded reader for file-based incremental reading
+        paths = [Path(p) for p in (log_paths or ["/var/log/auth.log"])]
+        self.reader = reader or BoundedLogReader(paths, max_lines=max_lines)
         self.parser = parser or AuthParser()
         self._cancelled = False
+        # Injectable read-only interface for journald or other bounded sources
+        self._injected_reader: Any = None
+        self._journal_reader: JournaldReader | None = None
+
+    def inject_reader(self, reader: Any) -> None:
+        """Inject a read-only bounded reader interface (e.g., journald wrapper)."""
+        self._injected_reader = reader
+        if isinstance(reader, JournaldReader):
+            self._journal_reader = reader
+
+    def inject_journald_reader(
+        self,
+        cursor: str | None = None,
+        max_lines: int = 500,
+        timeout: float = 30.0,
+    ) -> None:
+        self._journal_reader = JournaldReader(cursor=cursor, max_lines=max_lines, timeout=timeout)
+        self._injected_reader = self._journal_reader
 
     async def collect(self, poll_interval: float = 5.0) -> list[SecurityEvent]:
         events: list[SecurityEvent] = []
         if not self.enabled:
             return events
-        lines = await self.reader.tail_incremental(poll_interval)
-        for line in lines:
-            # Configurable parsing delegated to adapter; bounded line processing.
-            event = self._parse_line(line)
-            if event:
-                events.append(event)
+        try:
+            if self._journal_reader is not None:
+                lines = await self._journal_reader.read_lines(self.reader.max_lines)
+            elif self._injected_reader is not None:
+                lines = await self._injected_reader.read_lines(self.reader.max_lines)
+            else:
+                lines = await self.reader.read_lines(self.reader.max_lines)
+            for line in lines:
+                event = self._parse_line(line)
+                if event:
+                    events.append(event)
+        except Exception as exc:
+            # Transient errors handled without permanently killing collector
+            log.warning("Auth collection transient error (collector continues): %s", exc)
         return events[: self.reader.max_lines]
 
     def _parse_line(self, line: str) -> SecurityEvent | None:
-        return self.parser.parse_line(line, source="linux_auth")
+        event = self.parser.parse_line(line, source="linux_auth")
+        if event:
+            # Use configured UTC hours and structured country only.
+            event.metadata.setdefault("expected_hours", EXPECTED_LOGIN_HOURS)
+            event.metadata.setdefault("expected_countries", EXPECTED_COUNTRIES)
+        return event
 
     async def run(self, emit) -> None:
         if not self.enabled:
@@ -78,6 +153,8 @@ class LinuxAuthCollector:
         except asyncio.CancelledError:
             log.info("Linux auth collector cancelled cleanly.")
             self._cancelled = True
+            if self._journal_reader is not None:
+                self._journal_reader.cancel()
             raise
         except Exception as exc:
-            log.warning("Linux auth collection error: %s", exc)
+            log.warning("Linux auth collection error (collector continues): %s", exc)

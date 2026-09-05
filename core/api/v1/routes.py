@@ -4,7 +4,14 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
-from core.api.v1.schemas import ConfigUpdate, DashboardSummary, Page, WebLogin
+from core.api.v1.schemas import (
+    ConfigUpdate,
+    DashboardSummary,
+    Page,
+    ServiceItem,
+    ServicesResponse,
+    WebLogin,
+)
 from core.config_manager import UnknownConfigurationError
 
 router = APIRouter(prefix="/api/v1")
@@ -195,6 +202,39 @@ def llm_status(request: Request):
         "credential_configured": bool(settings.openrouter_api_key),
         "action_control": False,
     }
+
+
+@router.get("/services", response_model=ServicesResponse, dependencies=secured)
+def services_dashboard(
+    request: Request,
+    rolling_window_hours: int = Query(24, ge=1, le=168),
+):
+    store = request.app.state.store
+    services_agg = store.services_dashboard(rolling_window_hours=rolling_window_hours)
+    # Preserve existing summary keys for compatibility
+    container_services = store.services_list(50)
+    services_items = [
+        ServiceItem(
+            service=item["service"],
+            observed_status=item["observed_status"],
+            current_risk=item["current_risk"],
+            rolling_window_hours=item.get("rolling_window_hours", rolling_window_hours),
+            last_activity=item.get("last_activity"),
+            last_event_type=item.get("last_event_type", "unknown"),
+            event_count=item.get("event_count", 0),
+            warnings_24h=item.get("warnings_24h", 0),
+        )
+        for item in services_agg
+    ]
+    # Derive actual container/service status from relevant lifecycle evidence
+    # Generic requests cannot fake healthy container; unknown when no lifecycle evidence
+    return ServicesResponse(
+        services=services_items,
+        rolling_window_hours=rolling_window_hours,
+        container_services=container_services,
+        warnings_summary=sum(s.get("warnings_24h", 0) for s in services_items),
+        incidents_summary=store.action_count_24h("block") + store.action_count_24h("challenge"),
+    )
 
 
 @router.get("/mcp", dependencies=secured)

@@ -13,6 +13,7 @@ class SecurityTools:
             "security.get_incidents": {},
             "security.get_risk_score": {"ip": "string"},
             "security.explain_event": {"event_id": "string"},
+            "security.get_services": {},
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -45,8 +46,8 @@ class SecurityTools:
                 schema["required"] = required[name]
             definitions.append(
                 {
-                "name": name,
-                "description": name.replace("security.", "").replace("_", " "),
+                    "name": name,
+                    "description": name.replace("security.", "").replace("_", " "),
                     "inputSchema": schema,
                 }
             )
@@ -100,9 +101,7 @@ class SecurityTools:
                 "known": False,
             }
         if name == "security.get_behavior_anomalies":
-            return self.store.behavior_anomalies(
-                service=args.get("service"), ip=args.get("ip")
-            )
+            return self.store.behavior_anomalies(service=args.get("service"), ip=args.get("ip"))
         if name == "security.get_trust_score":
             from engine.trust.engine import TrustEngine
 
@@ -118,6 +117,14 @@ class SecurityTools:
             if not anomaly:
                 raise KeyError("anomaly not found")
             return anomaly
+        if name == "security.get_services":
+            rolling_window_hours = args.get("rolling_window_hours", 24)
+            return {
+                "services": self.store.services_dashboard(
+                    rolling_window_hours=rolling_window_hours
+                ),
+                "rolling_window_hours": rolling_window_hours,
+            }
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")
