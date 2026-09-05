@@ -122,6 +122,9 @@ class SecurityStore:
 
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
+        audit_columns = {row["name"] for row in db.execute("PRAGMA table_info(audit_log)")}
+        if "session_id" not in audit_columns:
+            db.execute("ALTER TABLE audit_log ADD COLUMN session_id TEXT")
         action_columns = {row["name"] for row in db.execute("PRAGMA table_info(actions)")}
         for name in ("expires_at", "policy_rule", "result"):
             if name not in action_columns:
@@ -348,9 +351,9 @@ class SecurityStore:
         expires_at: str | None = None,
         policy_rule: str | None = None,
         result: str = "",
-    ) -> None:
+    ) -> int:
         with self.connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """INSERT INTO actions(timestamp,ip,action,reason,provider,applied,
                 expires_at,policy_rule,result)
                 VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -366,20 +369,29 @@ class SecurityStore:
                     result,
                 ),
             )
+            return cursor.lastrowid
 
     def add_audit(
-        self, username: str, action: str, before: dict | None = None, after: dict | None = None
+        self,
+        username: str,
+        action: str,
+        before: dict | None = None,
+        after: dict | None = None,
+        *,
+        session_id: str | None = None,
     ) -> None:
         with self.connect() as db:
             db.execute(
-                "INSERT INTO audit_log(username,action,timestamp,before_state,after_state) "
-                "VALUES(?,?,?,?,?)",
+                "INSERT INTO audit_log(username,action,timestamp,"
+                "before_state,after_state,session_id) "
+                "VALUES(?,?,?,?,?,?)",
                 (
                     username,
                     action,
                     datetime.now(UTC).isoformat(),
                     json.dumps(before or {}),
                     json.dumps(after or {}),
+                    session_id,
                 ),
             )
 
@@ -405,7 +417,11 @@ class SecurityStore:
         self, username: str, role: str, credential_hash: str, version: str
     ) -> bool:
         with self.connect() as db:
-            if db.execute("SELECT 1 FROM setup_state WHERE id=1").fetchone():
+            db.execute("BEGIN IMMEDIATE")
+            if (
+                db.execute("SELECT 1 FROM setup_state WHERE id=1").fetchone()
+                or db.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+            ):
                 return False
             now = datetime.now(UTC).isoformat()
             db.execute(
@@ -416,6 +432,11 @@ class SecurityStore:
                 "INSERT INTO setup_state(id,initialized_at,version) VALUES(1,?,?)", (now, version)
             )
         return True
+
+    def user_by_credential(self, digest: str) -> dict | None:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM users WHERE credential_hash=?", (digest,)).fetchall()
+        return dict(rows[0]) if len(rows) == 1 else None
 
     def users(self) -> list[dict]:
         with self.connect() as db:
@@ -443,22 +464,44 @@ class SecurityStore:
         result = []
         for row in rows:
             item = dict(row)
-            item["expired"] = bool(item.get("expires_at") and item["expires_at"] <= now)
+            item["expired"] = item["result"] == "expired"
+            item["rollback_pending"] = bool(
+                (item["applied"] or item["result"] == "applying")
+                and item.get("expires_at")
+                and item["expires_at"] <= now
+            )
+            item["application_pending"] = item["result"] == "applying"
             item["active"] = bool(
                 item["applied"] and not item["expired"] and item["action"] != "allow"
             )
             result.append(item)
         return result
 
-    def revoke_action(self, action_id: int) -> dict | None:
+    def pending_actions(self) -> list[dict]:
+        with self.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM actions WHERE (applied=1 OR result='applying') "
+                    "AND action!='allow'"
+                )
+            ]
+
+    def action_by_id(self, action_id: int) -> dict | None:
         with self.connect() as db:
             row = db.execute("SELECT * FROM actions WHERE id=?", (action_id,)).fetchone()
-            if not row:
-                return None
-            db.execute("UPDATE actions SET applied=0,result=? WHERE id=?", ("revoked", action_id))
-        item = dict(row)
-        item.update({"applied": 0, "result": "revoked", "active": False})
-        return item
+        return dict(row) if row else None
+
+    def confirm_action(self, action_id: int, applied: bool, result: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE actions SET applied=?,result=? WHERE id=?",
+                (int(applied), result, action_id),
+            )
+
+    def finish_action(self, action_id: int, result: str) -> None:
+        with self.connect() as db:
+            db.execute("UPDATE actions SET applied=0,result=? WHERE id=?", (result, action_id))
 
     @staticmethod
     def action_duration_minutes(action: Action) -> int:

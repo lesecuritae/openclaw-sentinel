@@ -43,8 +43,11 @@ curl http://127.0.0.1:8080/health
 
 For a first deployment, use `docker-compose.example.yml` and copy `.env.example` to `.env`.
 Open `/api/v1/setup/status`; when uninitialized, complete `/api/v1/setup/initialize` with an
-administrator name and a strong API key, then set the same key in `.env` and restart. The setup
-wizard never returns or stores the cleartext key.
+operator-generated `SETUP_BOOTSTRAP_TOKEN` in the `X-Bootstrap-Token` header and a JSON body
+containing `username` and a new `api_key` (at least 32 random characters). The key becomes active
+immediately. Bootstrap is atomically single-use and refuses to overwrite existing users.
+Generate each token independently using `openssl rand -hex 32`; the wizard never returns or
+stores the cleartext key. Without configured credentials, API and WebSocket access is denied.
 
 ### Installation and updates
 
@@ -63,14 +66,15 @@ analyst and administrator roles constrain operational access; all changes are re
 audit log.
 
 The standalone configuration starts successfully without HAProxy and binds only to localhost.
-Set a long `SENTINEL_API_KEY` before exposing the API. Requests to all endpoints except health
-then require `Authorization: Bearer <token>`. No secret belongs in Git; `.env` is ignored.
+Set independent `SENTINEL_ADMIN_KEY`, `SENTINEL_ANALYST_KEY` and/or `SENTINEL_VIEWER_KEY`
+credentials (32 characters minimum). `SENTINEL_API_KEY` is a legacy explicitly configured admin
+credential. Protected endpoints always require `Authorization: Bearer <token>`. No secret belongs in Git; `.env` is ignored.
 
 Submit a normalized request event (also the HTTP boundary for an SPOE forwarder):
 
 ```bash
 curl -X POST http://127.0.0.1:8080/events \
-  -H 'Content-Type: application/json' -H 'Authorization: Bearer TOKEN' \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer ${COLLECTOR_TOKEN}" \
   -d '{"source":"haproxy","ip":"192.0.2.10","hostname":"app.example.org","service":"application","event_type":"request","path":"/login","method":"POST","user_agent":"example-client/1.0","severity":"medium","metadata":{"status":401,"frontend":"public","backend":"application"}}'
 ```
 
@@ -104,31 +108,21 @@ runtime command is formed.
 
 ### Request event pipeline
 
-Runtime `show sess` supplies active client/session data and `show stat` supplies aggregate
-status/error counters. For request-level data, Phase 1.5 accepts one JSON object per UDP datagram
-on port 1514. The decoder also accepts a normal syslog prefix before the JSON object. Enable
-`HAPROXY_REQUEST_COLLECTOR_ENABLED=true`; keep `HAPROXY_REQUEST_BIND` on a trusted interface and
-restrict the port by firewall. A representative HAProxy configuration is:
+Runtime `show sess` and `show stat` collectors read the local HAProxy socket. External events
+must use authenticated HTTP `/events` through TLS. The unauthenticated UDP listener is disabled;
+setting `HAPROXY_REQUEST_COLLECTOR_ENABLED=true` now fails configuration validation.
 
-```haproxy
-global
-  log 127.0.0.1:1514 local0
+Configure an independent credential for each collector, with exact source, event-type and service
+allowlists, for example in `.env` (replace the token with a newly generated random secret):
 
-defaults
-  mode http
-  option httplog
-  log global
-  log-format '{"timestamp":%Ts,"ip":"%ci","hostname":"%[req.hdr(host),json(utf8s)]","method":"%HM","path":"%HP","status":%ST,"frontend":"%ft","backend":"%b","service":"%b","user_agent":"%[req.hdr(user-agent),json(utf8s)]"}'
+```dotenv
+COLLECTOR_CREDENTIALS={"edge":{"token":"REPLACE_WITH_32_OR_MORE_RANDOM_CHARACTERS","source":"haproxy","event_types":["request"],"services":["application"]}}
 ```
 
-When HAProxy is outside Docker, point its syslog target at the configured host/bind address rather
-than the example loopback address. UDP transport is intentionally optional; a reliable local
-syslog relay can forward the same JSON payload. The decoder requires IP, method, path and status,
-then normalizes hostname, frontend, backend, user agent and timestamp. `country` and `asn` are
-nullable schema fields reserved for a future enrichment provider—there is no GeoIP lookup now.
-The existing authenticated `/events` endpoint accepts the same canonical event as a reliable
-SPOE/log-forwarder integration boundary. Aggregate events without an IP are stored but never
-trigger an IP action.
+User API keys cannot ingest events. Server-side provenance is attached as `collector_id`; sender
+IDs are replaced, timestamps must be within five minutes, and event fields and metadata are bounded.
+The identity resolver is prepared for verified signatures or mTLS; neither is claimed as implemented.
+Internal in-process collectors retain their local trust boundary.
 
 ## Rules and policy
 
@@ -149,7 +143,8 @@ feeds, ASN/geo reputation, history, fingerprints and ML-derived factors.
 
 `LLM_PROVIDER` supports `disabled` (default), `local`, or `openrouter`. Local mode expects an
 OpenAI-compatible `/v1/chat/completions` endpoint. OpenRouter requires `OPENROUTER_API_KEY` and
-`MODEL`; neither is stored in the database or repository. Event content is explicitly wrapped as
+`MODEL`, explicit `LLM_ALLOWED_PROVIDERS=["disabled","local","openrouter"]` and
+`LLM_DATA_CLASSIFICATION=external-redacted`; neither credential is stored in the database or repository. Event content is explicitly wrapped as
 untrusted data, but operators should still use a suitably isolated model. LLM output is advisory:
 it cannot choose policy outcomes or invoke HAProxy, challenge, firewall, or cloud actions.
 
@@ -213,7 +208,7 @@ before the new engine configuration is active. See [Phase 4 backend](docs/backen
 Safe defaults matter because Sentinel can sit near enforcement infrastructure. Automatic actions
 and collectors are opt-in, the API binds to loopback, the container drops Linux capabilities, and
 provider credentials come only from environment configuration. Deploy behind TLS, authenticate
-the API, isolate the HAProxy socket, restrict UDP ingestion to trusted senders, and retain an
+the API, isolate the HAProxy socket, use dedicated HTTP collector credentials, and retain an
 independent recovery path. See [SECURITY.md](SECURITY.md) before production use or vulnerability
 reporting.
 
@@ -298,3 +293,13 @@ session exists only in server and browser memory. Dashboard REST and WebSocket e
 the permanent API key directly, while machine-oriented ingest and MCP endpoints remain compatible.
 If the authenticator is lost, an administrator with host access must disable 2FA or replace the
 mounted secret and restart Sentinel. Do not expose the dashboard until enrollment is verified.
+
+## Audit security fixes and release validation
+
+See [security operations](docs/backend/security-operations.md) for scopes, bootstrap, limits,
+action expiry and upgrade requirements. Python runtime, test and build dependencies are fixed in
+hash-checked `requirements*.lock`; frontend dependencies are fixed by `package-lock.json` and
+installed with lifecycle scripts disabled. Docker bases and workflow actions use immutable digests.
+CI emits a wheel, CycloneDX runtime SBOM, SHA256SUMS and GitHub build provenance attestations.
+Verify downloaded artifacts with `sha256sum -c SHA256SUMS` and
+`gh attestation verify <artifact> --repo lesecuritae/openclaw-sentinel`.

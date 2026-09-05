@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -40,24 +41,43 @@ class IncidentPriority(StrEnum):
 
 
 class SecurityEvent(BaseModel):
-    event_id: str = Field(default_factory=lambda: str(uuid4()))
+    event_id: str = Field(default_factory=lambda: str(uuid4()), max_length=128)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     source: str
     ip: str
     service: str
     event_type: str
-    path: str | None = None
-    method: str | None = None
-    user_agent: str | None = None
+    path: str | None = Field(default=None, max_length=2048)
+    method: str | None = Field(default=None, max_length=2048)
+    user_agent: str | None = Field(default=None, max_length=2048)
     accept_language: str | None = Field(default=None, max_length=256)
     client_timezone: str | None = Field(default=None, max_length=128)
     device_id: str | None = Field(default=None, max_length=256)
     tls_fingerprint: str | None = Field(default=None, max_length=256)
-    hostname: str | None = None
-    country: str | None = None
-    asn: str | None = None
+    hostname: str | None = Field(default=None, max_length=2048)
+    country: str | None = Field(default=None, max_length=2048)
+    asn: str | None = Field(default=None, max_length=2048)
     severity: Severity = Severity.INFO
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def bounded_metadata(cls, value):
+        if len(value) > 32 or len(json.dumps(value, allow_nan=False).encode()) > 8192:
+            raise ValueError("metadata too large")
+
+        def depth(item, level=0):
+            if level > 4:
+                raise ValueError("metadata too deeply nested")
+            if isinstance(item, dict):
+                for child in item.values():
+                    depth(child, level + 1)
+            elif isinstance(item, list):
+                for child in item:
+                    depth(child, level + 1)
+
+        depth(value)
+        return value
 
     @field_validator("timestamp")
     @classmethod

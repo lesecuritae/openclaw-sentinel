@@ -7,22 +7,27 @@ permissions:
   contents: read
 jobs:
   test:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e '.[test]'
+      - run: pip install --require-hashes -r requirements-test.lock -r requirements-build.lock
+      - run: pip install --no-deps --no-build-isolation -e .
       - run: ruff check .
       - run: pytest
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: frontend
       - run: npm run lint
         working-directory: frontend
@@ -31,3 +36,19 @@ jobs:
       - run: npm run build
         working-directory: frontend
       - run: docker build -t openclaw-sentinel:${{ github.sha }} .
+      - name: Build release wheel and SBOM
+        run: |
+          mkdir -p release
+          SOURCE_DATE_EPOCH=1788480000 pip wheel --no-deps --no-build-isolation -w release .
+          pip-audit -r requirements.lock --require-hashes --no-deps -f cyclonedx-json -o release/sbom.cdx.json
+          cd release
+          sha256sum *.whl sbom.cdx.json > SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        if: github.event_name == 'push'
+        with:
+          subject-path: release/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-release-${{ github.sha }}
+          path: release/
+          if-no-files-found: error

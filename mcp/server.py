@@ -1,9 +1,15 @@
 import json
 from typing import Any
 
+from fastapi import HTTPException
+
+from core.auth import Principal
+from core.limits import RateBudget
+
 
 class SecurityTools:
     def __init__(self, service, store, llm, intelligence=None):
+        self.budget = RateBudget()
         self.service, self.store, self.llm, self.intelligence = (service, store, llm, intelligence)
 
     def definitions(self) -> list[dict[str, Any]]:
@@ -92,7 +98,71 @@ class SecurityTools:
             )
         return definitions
 
-    async def call(self, name: str, args: dict) -> Any:
+    @staticmethod
+    def scope_for(name: str) -> str:
+        return {
+            "security.add_trusted_entity": "policy.write",
+            "security.revoke_action": "action.execute",
+            "security.export_config": "config.export",
+            "security.get_audit_log": "audit.read",
+            "security.generate_report": "report.create",
+            "security.explain_incident": "llm.analyze",
+            "security.explain_event": "llm.analyze",
+            "security.analyze_ip": "llm.analyze",
+            "security.summarize_events": "llm.analyze",
+            "security.get_policies": "policy.read",
+            "security.test_policy": "policy.read",
+            "security.preview_action": "policy.read",
+            "security.get_actions": "action.read",
+            **dict.fromkeys(
+                {
+                    "security.check_ip",
+                    "security.get_events",
+                    "security.get_incidents",
+                    "security.get_incident_history",
+                    "security.get_risk_score",
+                    "security.get_services",
+                    "security.get_integrity",
+                    "security.get_integrity_summary",
+                    "security.check_ip_reputation",
+                    "security.get_threat_sources",
+                    "security.get_ip_history",
+                    "security.get_device_profile",
+                    "security.get_behavior_anomalies",
+                    "security.get_trust_score",
+                    "security.explain_anomaly",
+                    "security.explain_risk_score",
+                },
+                "incident.read",
+            ),
+            "security.get_trusted_entities": "policy.read",
+            "security.explain_action": "policy.read",
+        }[name]
+
+    async def call(self, name: str, args: dict, principal: Principal | None = None) -> Any:
+        if principal is None:
+            raise HTTPException(401, "authenticated user required")
+        principal.require(self.scope_for(name))
+        definitions = {item["name"]: item for item in self.definitions()}
+        if name not in definitions:
+            raise KeyError("unknown tool")
+        schema = definitions[name]["inputSchema"]
+        if not isinstance(args, dict) or set(args) - set(schema["properties"]):
+            raise ValueError("invalid arguments")
+        if set(schema.get("required", [])) - set(args):
+            raise ValueError("missing arguments")
+        for key, value in args.items():
+            kind = schema["properties"][key]["type"]
+            if (kind == "string" and (not isinstance(value, str) or len(value) > 2048)) or (
+                kind == "integer" and (type(value) is not int or not 0 <= value <= 1000)
+            ):
+                raise ValueError("invalid argument type or size")
+        if self.scope_for(name) == "report.create" and not self.budget.allow("reports", 10):
+            raise HTTPException(429, "report rate limit exceeded")
+        if self.scope_for(name) in {"action.execute", "policy.write", "config.export"}:
+            self.store.add_audit(
+                principal.user_id, name, after=args, session_id=principal.session_id
+            )
         if name in {"security.check_ip", "security.get_risk_score"}:
             return self.store.profile(args["ip"]) or {
                 "ip": args["ip"],
@@ -220,17 +290,7 @@ class SecurityTools:
         if name == "security.get_actions":
             return self.store.actions(args.get("limit", 100))
         if name == "security.revoke_action":
-            selected = next(
-                (item for item in self.store.actions(1000) if item["id"] == args["action_id"]), None
-            )
-            if not selected:
-                raise KeyError("action not found")
-            if not getattr(self.service, "dry_run", True) and selected["action"] in {
-                "block",
-                "rate_limit",
-            }:
-                await self.service.haproxy.unblock(selected["ip"])
-            return self.store.revoke_action(args["action_id"])
+            return await self.service.lifecycle.revoke(args["action_id"])
         if name == "security.analyze_ip":
             ip = args["ip"]
             return {
@@ -282,25 +342,27 @@ class SecurityTools:
         ]
         return await self._safe_llm(self.llm.analyze_incident(incident, actions))
 
-    async def jsonrpc(self, request: dict) -> dict:
+    async def jsonrpc(self, request: dict, principal: Principal | None = None) -> dict:
+        if principal is None:
+            raise HTTPException(401, "authenticated user required")
         method, request_id = request.get("method"), request.get("id")
         try:
             if method == "initialize":
                 result = {
                     "protocolVersion": "2025-03-26",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.4.5"},
+                    "serverInfo": {"name": "openclaw-sentinel", "version": "0.5.0"},
                 }
             elif method == "tools/list":
                 result = {"tools": self.definitions()}
             elif method == "tools/call":
                 params = request.get("params", {})
-                value = await self.call(params["name"], params.get("arguments", {}))
+                value = await self.call(params["name"], params.get("arguments", {}), principal)
                 result = {"content": [{"type": "text", "text": json.dumps(value, default=str)}]}
             else:
                 raise KeyError("method not found")
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, TypeError, OSError, RuntimeError) as exc:
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,

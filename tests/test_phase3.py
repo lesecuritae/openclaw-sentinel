@@ -4,8 +4,10 @@ import pytest
 
 from actions.anubis import AnubisChallengeAdapter
 from actions.haproxy import HAProxyActionAdapter
+from core.auth import Principal
 from core.config import DetectionRule, PolicyConfig, RulesConfig
 from core.models import Action, RiskFactor, SecurityEvent
+from core.permissions import Role
 from core.service import SentinelService
 from database.store import SecurityStore
 from engine.baseline.engine import BaselineEngine
@@ -185,6 +187,8 @@ async def test_mcp_phase3_tools_read_persisted_state(tmp_path):
     factor = RiskFactor(source="client:mismatch", score=8, reason="changed", kind="client")
     store.add_anomalies(event, [factor])
     tools = SecurityTools(None, store, None)
+    from functools import partial
+    tools.call = partial(tools.call, principal=Principal("test", Role.ANALYST, "test-session"))
 
     profile = await tools.call("security.get_device_profile", {"device_id": "device-1"})
     assert profile["positive_event_count"] == 1

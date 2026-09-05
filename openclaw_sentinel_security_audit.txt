@@ -1,0 +1,206 @@
+OPENCLAW SENTINEL SECURITY AUDIT
+
+Auditbasis:
+Repository-Stand 11c91c4, ausschließlich lesend geprüft. Keine Quellcode-, Konfigurations- oder Build-Dateien wurden geändert.
+
+EXECUTIVE SUMMARY
+
+Bewertung: ROT
+
+OpenClaw Sentinel besitzt gute Schutzmaßnahmen wie Dry-Run, deterministische Policies, getrennte LLM-Analyse, Container ohne Root-Rechte, Capability-Drop, Konfigurationsvalidierung und Security-Workflows.
+
+Ein sicherer produktiver Betrieb ist aktuell trotzdem nicht vertretbar. Die Authentifizierung ist standardmäßig fail-open, Rollen werden aus einem frei gesetzten Client-Header übernommen, privilegierte MCP- und Action-Endpunkte erzwingen keine Rollenprüfung und HAProxy-Aktionen laufen technisch nicht automatisch ab.
+
+KRITISCHE FINDINGS
+
+F-01: Fail-open Authentifizierung und fälschbare Rollen
+Schweregrad: Kritisch
+
+Beschreibung:
+Wenn SENTINEL_API_KEY leer ist, akzeptiert die Anwendung alle Requests. Zusätzlich wird die Rolle direkt aus X-Sentinel-Role gelesen. Ohne Header gilt der Benutzer als Administrator.
+
+Angriffsszenario:
+Ein Angreifer greift ohne API-Key zu oder setzt X-Sentinel-Role: administrator.
+
+Betroffene Komponenten:
+API, Dashboard, Rollenmodell, Konfiguration.
+
+Empfohlene Lösung:
+Authentifizierung im Produktionsmodus erzwingen. Rollen ausschließlich aus authentifizierten Sessions oder Benutzerkonten ableiten. Client-Header nicht als Berechtigungsquelle verwenden.
+
+F-02: Privilegierte MCP- und Action-Endpunkte ohne Rollenprüfung
+Schweregrad: Kritisch
+
+Beschreibung:
+MCP, Trusted Entities, Unblock-Endpunkte und Teile der Action-Verwaltung prüfen teilweise nur den API-Key.
+
+Angriffsszenario:
+Ein Benutzer fügt ein eigenes Netzwerk zur Trusted List hinzu, unterdrückt Reaktionen, nimmt Blocks zurück oder exportiert Konfigurationen.
+
+Betroffene Komponenten:
+MCP, Response Layer, Trusted Entities, HAProxy.
+
+Empfohlene Lösung:
+MCP-Tools und Action-Endpunkte mit expliziten Rollen und Scopes schützen. Mutierende Funktionen nur für Administratoren oder berechtigte Analysten erlauben.
+
+F-03: Gefälschte Events beeinflussen Risiko und Incidents
+Schweregrad: Hoch
+
+Beschreibung:
+POST /events akzeptiert vom Client gelieferte Events ohne kryptografische Herkunftsprüfung oder Collector-Attestierung.
+
+Angriffsszenario:
+Ein kompromittierter API-Key sendet beliebige Login-, Docker- oder Threat-Events und erzeugt dadurch falsche Risk Scores und Incidents.
+
+Betroffene Komponenten:
+Event Pipeline, Detection Engine, Risk Engine, Incident Management.
+
+Empfohlene Lösung:
+Collector und externe Eventquellen trennen, Quellen signieren oder per mTLS schützen, Eventtypen whitelisten und Rate Limits einführen.
+
+F-04: HAProxy-Blocks laufen nicht automatisch ab
+Schweregrad: Hoch
+
+Beschreibung:
+Die Ablaufzeit wird in SQLite gespeichert, aber die ACL in HAProxy wird nach Ablauf nicht automatisch entfernt.
+
+Angriffsszenario:
+Eine False Positive Detection blockiert eine interne IP dauerhaft, obwohl das Dashboard die Aktion als abgelaufen anzeigt.
+
+Betroffene Komponenten:
+HAProxy Action Provider, Action History, Response Safety Layer.
+
+Empfohlene Lösung:
+Ablaufdienst und Startup-Reconciliation implementieren. Provider-Status erst nach erfolgreichem Rollback als beendet markieren.
+
+F-05: Unauthentifizierter Setup-Endpunkt
+Schweregrad: Hoch
+
+Beschreibung:
+Der Setup-Endpunkt ist nicht geschützt und speichert Benutzerinformationen, konfiguriert aber nicht den tatsächlich wirksamen API-Key.
+
+Angriffsszenario:
+Ein Angreifer initialisiert das System vor dem Betreiber oder erzeugt einen widersprüchlichen Bootstrap-Zustand.
+
+Betroffene Komponenten:
+Setup Wizard, Benutzerverwaltung, Authentifizierung.
+
+Empfohlene Lösung:
+Setup lokal oder mit einmaligem Bootstrap-Token absichern, atomar sperren und nach Abschluss deaktivieren.
+
+HOHE RISIKEN
+
+F-06: Keine ausreichenden Rate Limits
+
+Event-Ingest, MCP, LLM-Analyse und Reports besitzen keine vergleichbaren Limits wie der 2FA-Login.
+
+Auswirkung:
+Event- und Request-Flooding kann CPU, Speicher, SQLite und externe LLM-Kontingente erschöpfen.
+
+Empfehlung:
+Requestgrößen, Event-Metadaten, Aufrufraten und LLM-Budgets begrenzen.
+
+F-07: Prompt Injection und Datenabfluss über LLM
+
+Logs und Eventdaten werden an lokale oder externe LLM-Anbieter weitergegeben. Die vorhandene Filterung entfernt nur wenige exakte Textfolgen.
+
+Auswirkung:
+Manipulierte Logs können Analysen verfälschen oder sensible Daten an OpenRouter weitergeben.
+
+Empfehlung:
+Schema-basierte Extraktion, Redaction, Provider-Allowlist, HTTPS und strikte Trennung von Analyse und Steuerung.
+
+F-08: Supply-Chain- und Build-Reproduzierbarkeit unzureichend
+
+Docker-Base-Images, GitHub Actions und Python-Abhängigkeiten sind nicht vollständig per Digest oder Hash gepinnt. SBOM und Artefaktsignierung fehlen.
+
+Auswirkung:
+Kompromittierte Images, Pakete oder Actions können in zukünftige Builds gelangen.
+
+Empfehlung:
+Digest-Pinning, reproduzierbare Builds, SBOM, Signaturen und verifizierte Release-Artefakte.
+
+MITTLERE RISIKEN
+
+F-09: Audit-Identität ist fälschbar
+
+X-Sentinel-User wird aus dem Request übernommen. Die Identität ist nicht sicher an eine Session gebunden.
+
+F-10: Konfigurationsimport nicht vollständig transaktional
+
+Mehrere Konfigurationsdateien werden nacheinander geschrieben. Ein Fehler kann eine gemischte Konfiguration erzeugen. Backups liegen zudem nicht zwingend persistent.
+
+F-11: Docker-Vertrauensgrenze nur dokumentiert
+
+DOCKER_API_URL kann auf falsch konfigurierte oder zu mächtige Docker-Endpunkte zeigen. Ein Read-only-Proxy wird nicht technisch erzwungen.
+
+F-12: Benutzer- und Rollenmodell unvollständig
+
+Die Users-Tabelle wird nicht als tatsächliche Authentifizierungsquelle verwendet. Benutzerverwaltung, Rotation und Deaktivierung fehlen.
+
+F-13: MCP ohne feingranulare Scopes
+
+MCP unterscheidet nicht zwischen Viewer-, Analyst- und Administrator-Tools. Einige Providerfehler können außerdem als generische Serverfehler auftreten.
+
+NIEDRIGE RISIKEN
+
+F-14: Versionsangaben inkonsistent
+
+Die Anwendung meldet 0.5.0, MCP meldet 0.4.5.
+
+F-15: Betriebsinformationen über Status-Endpunkte
+
+Health-, Auth-, LLM- und MCP-Status können bei externer Erreichbarkeit Informationen über den Betrieb preisgeben.
+
+POSITIVE SICHERHEITSMASSNAHMEN
+
+- Container läuft als unprivilegierter Benutzer.
+- Linux-Capabilities werden entfernt.
+- no-new-privileges ist aktiviert.
+- Collector und automatische Aktionen sind standardmäßig deaktiviert.
+- Dry-Run ist standardmäßig aktiv.
+- Explizite Block-Regeln können verlangt werden.
+- LLM-Ausgaben können keine Policies oder Aktionen steuern.
+- Konfigurationen werden validiert und atomar ersetzt.
+- Log- und Docker-Reader besitzen Größen- und Batch-Limits.
+- Security-Header und CSP sind vorhanden.
+- WebSocket prüft Origin und Token.
+- Browser-Token werden nicht persistent im Local Storage gespeichert.
+- CI enthält Tests, Linting, Docker Build, Dependency Audits und Secret Scanning.
+
+ABUSE-CASE-BEWERTUNG
+
+Gefälschte Events:
+Erkennung teilweise vorhanden. Bei erfolgreicher Authentifizierung können Events dennoch Risk Scores und Incidents manipulieren.
+
+Log-Flooding:
+Collector sind begrenzt, HTTP-Ingest und MCP jedoch nicht ausreichend. DoS-Risiko besteht.
+
+Manipulierte Requests:
+Detection kann Muster erkennen, aber gefälschte Events und fehlende Limits ermöglichen False Positives.
+
+Admin-Zugriff:
+Bei leerem API-Key oder gefälschter Rolle ist privilegierter Zugriff möglich.
+
+MCP-Missbrauch:
+Mit API-Key können potenziell privilegierte Tools ohne ausreichende Rollenprüfung aufgerufen werden.
+
+False Positives:
+Dry-Run und Audit helfen. Bei aktivierten HAProxy-Aktionen besteht wegen fehlendem technischem Ablauf die Gefahr dauerhafter Sperren.
+
+RELEASE-EMPFEHLUNG
+
+OpenClaw Sentinel ist in der aktuellen Form nicht für einen produktiven externen Release v0.1.0 geeignet.
+
+Vor der Freigabe müssen mindestens folgende Punkte behoben werden:
+
+1. Fail-closed Authentifizierung.
+2. Serverseitige Rollen und MCP-Scopes.
+3. Sichere Setup- und Bootstrap-Logik.
+4. Echte Ablauf- und Rollback-Mechanik für HAProxy.
+5. Authentifizierter und begrenzter Event-Ingest.
+6. Strikte LLM-Datenfilterung und Providerkontrolle.
+7. Reproduzierbare, signierte Supply Chain.
+8. Manipulationsresistenter Audit Trail.
+
+Endbewertung: ROT.

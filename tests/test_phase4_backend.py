@@ -32,7 +32,7 @@ def web_app(tmp_path):
         rules_path=config_dir / "rules.yaml",
         policy_path=config_dir / "policy.yaml",
         intelligence_path=config_dir / "intelligence.yaml",
-        sentinel_api_key="test-secret",
+        sentinel_api_key="test-secret-with-32-characters-minimum",
     )
     app = FastAPI()
     app.state.settings = settings
@@ -41,7 +41,9 @@ def web_app(tmp_path):
     app.state.tools = ToolsStub()
     app.state.runtime = SimpleNamespace(command=lambda _command: asyncio.sleep(0, result=""))
     app.state.service = SimpleNamespace(haproxy=None)
-    app.state.web_sessions = WebSessionManager(enabled=False, api_key="test-secret")
+    app.state.web_sessions = WebSessionManager(
+        enabled=False, api_key="test-secret-with-32-characters-minimum"
+    )
     app.include_router(api_router)
     app.include_router(ws_router, prefix="/api/v1")
     return app
@@ -50,7 +52,7 @@ def web_app(tmp_path):
 def test_rest_auth_dashboard_and_limits(web_app):
     with TestClient(web_app) as client:
         assert client.get("/api/v1/dashboard").status_code == 401
-        headers = {"Authorization": "Bearer test-secret"}
+        headers = {"Authorization": "Bearer test-secret-with-32-characters-minimum"}
         response = client.get("/api/v1/dashboard", headers=headers)
         assert response.status_code == 200
         assert response.json()["events_24h"] == 0
@@ -84,12 +86,15 @@ def test_websocket_requires_token_and_rejects_cross_origin(web_app):
             websocket.send_json({"token": "wrong"})
             with pytest.raises(WebSocketDisconnect):
                 websocket.receive_json()
-        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
-            "/api/v1/ws/events", headers={"origin": "https://evil.example"}
+        with (
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect(
+                "/api/v1/ws/events", headers={"origin": "https://evil.example"}
+            ),
         ):
             pass
         with client.websocket_connect("/api/v1/ws/events") as websocket:
-            websocket.send_json({"token": "test-secret"})
+            websocket.send_json({"token": "test-secret-with-32-characters-minimum"})
             assert websocket.receive_json() == {"type": "authenticated"}
 
 
@@ -107,14 +112,14 @@ def test_broadcast_queue_is_bounded_and_keeps_latest():
 def test_enabled_two_factor_cannot_be_bypassed_with_api_key(web_app):
     secret = "JBSWY3DPEHPK3PXP"
     web_app.state.web_sessions = WebSessionManager(
-        enabled=True, api_key="test-secret", secret=secret
+        enabled=True, api_key="test-secret-with-32-characters-minimum", secret=secret
     )
     with TestClient(web_app) as client:
-        permanent = {"Authorization": "Bearer test-secret"}
+        permanent = {"Authorization": "Bearer test-secret-with-32-characters-minimum"}
         assert client.get("/api/v1/dashboard", headers=permanent).status_code == 401
         login = client.post(
             "/api/v1/auth/session",
-            json={"api_key": "test-secret", "totp_code": totp(secret)},
+            json={"api_key": "test-secret-with-32-characters-minimum", "totp_code": totp(secret)},
         )
         assert login.status_code == 200
         session = login.json()["token"]

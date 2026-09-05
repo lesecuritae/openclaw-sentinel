@@ -1,10 +1,10 @@
 import asyncio
 import logging
-import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -17,9 +17,11 @@ from collectors.integrity import IntegrityCollector
 from collectors.service import ServiceLogCollector
 from core.api.v1 import api_router, ws_router
 from core.api.v1.ws.events import manager as event_manager
+from core.auth import audit, authenticate, scoped
 from core.config import Settings
 from core.config_manager import ConfigManager
-from core.models import SecurityEvent
+from core.event_security import IngestEvent, collector_identity, validate_event
+from core.limits import RequestLimits
 from core.service import SentinelService
 from core.web_auth import WebSessionManager
 from database.store import SecurityStore
@@ -57,17 +59,10 @@ web_sessions = WebSessionManager(
 )
 
 
-def authenticate(authorization: str | None = Header(default=None)) -> None:
-    supplied = authorization.removeprefix("Bearer ") if authorization else ""
-    if settings.sentinel_api_key and not secrets.compare_digest(
-        supplied, settings.sentinel_api_key
-    ):
-        raise HTTPException(status_code=401, detail="invalid API key")
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    tasks = []
+    await service.lifecycle.reconcile()
+    tasks = [asyncio.create_task(service.lifecycle.run(settings.action_expiry_interval_seconds))]
     if settings.haproxy_collector_enabled:
         tasks.append(
             asyncio.create_task(
@@ -122,9 +117,18 @@ async def lifespan(_: FastAPI):
     yield
     for task in tasks:
         task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="OpenClaw Sentinel", version="0.5.0", lifespan=lifespan)
+app = FastAPI(
+    title="OpenClaw Sentinel",
+    version="0.5.0",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+app.add_middleware(RequestLimits, settings=settings)
 app.state.settings = settings
 app.state.store = store
 app.state.service = service
@@ -158,34 +162,36 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/events", dependencies=[Depends(authenticate)])
-async def ingest(event: SecurityEvent):
-    return await service.process(event)
+@app.post("/events")
+async def ingest(event: IngestEvent, identity: Annotated[dict, Depends(collector_identity)]):
+    return await service.process(validate_event(event, identity))
 
 
-@app.get("/events", dependencies=[Depends(authenticate)])
-async def events(ip: str | None = None, limit: int = 100):
+@app.get("/events", dependencies=[Depends(scoped("incident.read"))])
+async def events(ip: str | None = None, limit: int = Query(100, ge=1, le=500)):
     return store.events(ip=ip, limit=limit)
 
 
-@app.get("/risk/{ip}", dependencies=[Depends(authenticate)])
+@app.get("/risk/{ip}", dependencies=[Depends(scoped("incident.read"))])
 async def risk(ip: str):
     return store.profile(ip) or {"ip": ip, "risk_score": 0, "action": "allow"}
 
 
-@app.get("/incidents", dependencies=[Depends(authenticate)])
-async def incidents(limit: int = 100):
+@app.get("/incidents", dependencies=[Depends(scoped("incident.read"))])
+async def incidents(limit: int = Query(100, ge=1, le=500)):
     return store.incidents(limit)
 
 
-@app.post("/actions/unblock/{ip}", dependencies=[Depends(authenticate)])
-async def unblock(ip: str):
-    return await service.haproxy.unblock(ip)
+@app.post("/actions/unblock/{ip}", dependencies=[Depends(scoped("action.execute"))])
+async def unblock(request: Request, ip: str):
+    result = await service.lifecycle.unblock(ip)
+    audit(request, "action.unblock", after={"ip": ip})
+    return result
 
 
 @app.post("/mcp", dependencies=[Depends(authenticate)])
-async def mcp(request: dict):
-    return await tools.jsonrpc(request)
+async def mcp(request: Request, payload: dict):
+    return await tools.jsonrpc(payload, request.state.principal)
 
 
 app.include_router(api_router)

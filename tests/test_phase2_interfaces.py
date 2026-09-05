@@ -2,7 +2,9 @@ import json
 
 import pytest
 
+from core.auth import Principal
 from core.models import Action, RiskAssessment, RiskFactor
+from core.permissions import Role
 from database.store import SecurityStore
 from llm.gateway import LLMGateway, LLMProvider
 from mcp.server import SecurityTools
@@ -67,6 +69,8 @@ async def test_mcp_exposes_threat_tools_and_explainable_profile(tmp_path):
     )
     store.update_profile(assessment)
     tools = SecurityTools(service=None, store=store, llm=None)
+    from functools import partial
+    tools.call = partial(tools.call, principal=Principal("test", Role.ANALYST, "test-session"))
 
     names = {definition["name"] for definition in tools.definitions()}
     assert {

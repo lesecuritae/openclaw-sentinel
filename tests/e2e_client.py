@@ -1,4 +1,5 @@
 """Deterministic black-box client for the isolated HAProxy/Sentinel stack."""
+
 import json
 import os
 import time
@@ -14,9 +15,22 @@ def request(path: str, method: str = "GET") -> int:
     req = urllib.request.Request(TARGET + path, method=method)
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
-            return response.status
+            status = response.status
     except urllib.error.HTTPError as error:
-        return error.code
+        status = error.code
+    submit_event(
+        {
+            "source": "haproxy",
+            "ip": "192.0.2.1",
+            "service": "haproxy-test",
+            "event_type": "request",
+            "path": path,
+            "method": method,
+            "metadata": {"status": status},
+        },
+        "e2e-edge-fixture-credential-32-characters",
+    )
+    return status
 
 
 def api(path: str):
@@ -44,10 +58,15 @@ def inject_docker_fixture():
         "severity": "medium",
         "metadata": {"actor_id": "e2e-testservice", "action": "restart"},
     }
+    submit_event(payload, "e2e-docker-fixture-credential-32-characters")
+
+
+def submit_event(payload, token):
+    """Test collector submits observed responses using a source-bound credential."""
     req = urllib.request.Request(
         SENTINEL + "/events",
         data=json.dumps(payload).encode(),
-        headers={**HEADERS, "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=5):
         pass
@@ -68,7 +87,9 @@ def main():
     assert dashboard["current_risk"] > 0
     assert api("/api/v1/incidents?limit=100")["items"]
     mcp_payload = {
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
         "params": {"name": "security.get_services", "arguments": {}},
     }
     req = urllib.request.Request(

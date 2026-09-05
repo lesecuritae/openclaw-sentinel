@@ -2,6 +2,7 @@ import json
 
 from actions.anubis import AnubisChallengeAdapter
 from actions.haproxy import HAProxyActionAdapter
+from actions.lifecycle import ActionLifecycle
 from core.models import Action, ActionResult, RiskAssessment, RiskFactor, SecurityEvent
 from database.store import SecurityStore
 from engine.behavior.analyzer import BehaviorAnalyzer
@@ -35,6 +36,7 @@ class SentinelService:
         self.geo_time = GeoTimeAnalyzer()
         self.client = ClientMismatchAnalyzer()
         self.trust = TrustEngine()
+        self.lifecycle = ActionLifecycle(store, haproxy)
 
     async def process(self, event: SecurityEvent) -> RiskAssessment:
         self.store.add_event(event)
@@ -118,19 +120,35 @@ class SentinelService:
                 if event.method:
                     self.store.observe_baseline(event.service, f"method:{event.method.upper()}")
             expires_at = self.store.action_expiry(assessment.action)
-            result = await self._act(assessment, expires_at)
-            self.store.add_action(
-                event.ip,
-                assessment.action,
-                ",".join(assessment.reasons),
-                result.provider,
-                result.applied,
-                expires_at=expires_at,
-                policy_rule=str(
-                    self.policy.explain(assessment, context).get("rule") or "threshold"
-                ),
-                result=result.detail,
-            )
+            async with self.lifecycle.lock:
+                pending_id = None
+                if assessment.action == Action.BLOCK and not self.dry_run and self.haproxy.enabled:
+                    # Persist rollback intent before the external effect, including crash windows.
+                    pending_id = self.store.add_action(
+                        event.ip,
+                        assessment.action,
+                        ",".join(assessment.reasons),
+                        "haproxy",
+                        False,
+                        expires_at=expires_at,
+                        result="applying",
+                    )
+                result = await self._act(assessment, expires_at)
+                if pending_id is not None:
+                    self.store.confirm_action(pending_id, result.applied, result.detail)
+                else:
+                    self.store.add_action(
+                        event.ip,
+                        assessment.action,
+                        ",".join(assessment.reasons),
+                        result.provider,
+                        result.applied,
+                        expires_at=expires_at,
+                        policy_rule=str(
+                            self.policy.explain(assessment, context).get("rule") or "threshold"
+                        ),
+                        result=result.detail,
+                    )
         if self.event_publisher:
             self.event_publisher(
                 {

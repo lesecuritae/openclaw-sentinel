@@ -57,6 +57,14 @@ class IntelligenceConfig(BaseModel):
     single_source_ceiling: int = Field(default=89, ge=0, le=99)
 
 
+class CollectorCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=32, max_length=4096)
+    source: str = Field(min_length=1, max_length=64)
+    event_types: list[str] = Field(min_length=1, max_length=64)
+    services: list[str] = Field(min_length=1, max_length=64)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -83,6 +91,23 @@ class Settings(BaseSettings):
     integrity_file_paths: str = ""
     integrity_package_report: str = ""
     sentinel_api_key: str = ""
+    sentinel_admin_key: str = ""
+    sentinel_analyst_key: str = ""
+    sentinel_viewer_key: str = ""
+    require_authentication: bool = True
+    setup_bootstrap_token: str = ""
+    collector_credentials: dict[str, CollectorCredential] = Field(default_factory=dict)
+    api_rate_limit: int = Field(default=600, ge=1, le=10000)
+    event_rate_limit: int = Field(default=300, ge=1, le=10000)
+    mcp_rate_limit: int = Field(default=60, ge=1, le=1000)
+    report_rate_limit: int = Field(default=10, ge=1, le=100)
+    llm_rate_limit: int = Field(default=10, ge=1, le=100)
+    max_event_bytes: int = Field(default=32768, ge=1024, le=65536)
+    max_request_bytes: int = Field(default=262144, ge=1024, le=1048576)
+    action_expiry_interval_seconds: float = Field(default=5, ge=0.1, le=60)
+    llm_allowed_providers: list[str] = Field(default_factory=lambda: ["disabled", "local"])
+    llm_data_classification: str = "internal"
+    llm_max_analysis_bytes: int = Field(default=16384, ge=1024, le=65536)
     llm_provider: str = "disabled"
     openrouter_api_key: str = ""
     model: str = ""
@@ -99,6 +124,22 @@ class Settings(BaseSettings):
     # Docker allowlists passed from app / settings for collector use
     container_patterns: str = ""
     image_patterns: str = ""
+
+    @model_validator(mode="after")
+    def security_configuration(self):
+        keys = [key for key in self.role_credentials.values() if key]
+        keys += [config.token for config in self.collector_credentials.values()]
+        if self.setup_bootstrap_token:
+            keys.append(self.setup_bootstrap_token)
+        if len(keys) != len(set(keys)):
+            raise ValueError("Credentials must be unique across roles, collectors and bootstrap")
+        if any(len(key) < 32 for key in keys):
+            raise ValueError("Credentials must contain at least 32 characters")
+        if not self.require_authentication:
+            raise ValueError("Authentication cannot be disabled")
+        if self.haproxy_request_collector_enabled:
+            raise ValueError("Unauthenticated UDP ingest is disabled; use authenticated /events")
+        return self
 
     def load_rules(self) -> RulesConfig:
         return RulesConfig.model_validate(yaml.safe_load(self.rules_path.read_text()))
@@ -119,16 +160,21 @@ class Settings(BaseSettings):
 
     @property
     def allowed_containers(self) -> list[str]:
-        return [
-            p.strip() for p in self.container_patterns.split(",") if p.strip()
-        ]
+        return [p.strip() for p in self.container_patterns.split(",") if p.strip()]
 
     @property
     def allowed_images(self) -> list[str]:
-        return [
-            p.strip() for p in self.image_patterns.split(",") if p.strip()
-        ]
+        return [p.strip() for p in self.image_patterns.split(",") if p.strip()]
 
     @property
     def important_file_paths(self) -> list[str]:
         return [p.strip() for p in self.integrity_file_paths.split(",") if p.strip()]
+
+    @property
+    def role_credentials(self) -> dict[str, str]:
+        """Credentials are mapped to roles server-side; roles never come from requests."""
+        return {
+            "administrator": self.sentinel_admin_key or self.sentinel_api_key,
+            "analyst": self.sentinel_analyst_key,
+            "viewer": self.sentinel_viewer_key,
+        }

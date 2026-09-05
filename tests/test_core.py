@@ -17,9 +17,16 @@ from engine.risk import RiskEngine
 class RuntimeMock:
     def __init__(self):
         self.commands = []
+        self.entries = set()
 
     async def command(self, command):
         self.commands.append(command)
+        if command.startswith("add acl"):
+            self.entries.add(command.split()[-1])
+        if command.startswith("del acl"):
+            self.entries.discard(command.split()[-1])
+        if command.startswith("show acl"):
+            return "\n".join(f"0x123 {ip}" for ip in self.entries)
         return ""
 
 
@@ -81,7 +88,7 @@ async def test_simulated_event_blocks_via_runtime(tmp_path: Path):
     )
     result = await service.process(event)
     assert result.action == Action.BLOCK
-    assert runtime.commands == ["add acl /acl.lst 192.0.2.10"]
+    assert "add acl /acl.lst 192.0.2.10" in runtime.commands
 
 
 @pytest.mark.asyncio
@@ -92,4 +99,4 @@ async def test_llm_provider_mock():
         async def analyze(self, prompt):
             return "mock analysis"
 
-    assert await LLMGateway(Mock()).explain("event") == "mock analysis"
+    assert await LLMGateway(Mock()).explain('{"event_type": "request"}') == "mock analysis"

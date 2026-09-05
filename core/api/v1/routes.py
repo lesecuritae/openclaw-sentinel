@@ -13,24 +13,11 @@ from core.api.v1.schemas import (
     ServicesResponse,
     WebLogin,
 )
+from core.auth import audit, authenticate, credential_principal, scoped
 from core.config_manager import UnknownConfigurationError
-from core.permissions import Role, current_role, require_role
+from core.permissions import Role, current_role
 
 router = APIRouter(prefix="/api/v1")
-
-
-def authenticate(request: Request) -> None:
-    expected = request.app.state.settings.sentinel_api_key
-    authorization = request.headers.get("authorization", "")
-    supplied = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
-    if request.app.state.web_sessions.enabled:
-        if not request.app.state.web_sessions.validate(supplied):
-            raise HTTPException(status_code=401, detail="invalid or expired web session")
-        return
-    if not expected:
-        return
-    if not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="invalid API key")
 
 
 secured = [Depends(authenticate)]
@@ -50,20 +37,39 @@ def setup_status(request: Request):
 def setup_initialize(request: Request, payload: dict):
     if request.app.state.store.setup_initialized():
         raise HTTPException(status_code=409, detail="setup already initialized")
+    bootstrap = request.headers.get("x-bootstrap-token", "")
+    configured = request.app.state.settings.setup_bootstrap_token
+    if not configured or not secrets.compare_digest(bootstrap.encode(), configured.encode()):
+        raise HTTPException(status_code=401, detail="valid bootstrap token required")
     username = str(payload.get("username", "")).strip()
     api_key = str(payload.get("api_key", ""))
-    if not username or len(username) > 128 or len(api_key) < 16:
+    if not username or len(username) > 128 or len(api_key) < 32 or len(api_key) > 4096:
         raise HTTPException(status_code=422, detail="username and a strong api_key are required")
+    reserved = list(request.app.state.settings.role_credentials.values())
+    reserved += [item.token for item in request.app.state.settings.collector_credentials.values()]
+    reserved.append(configured)
+    if api_key in reserved:
+        raise HTTPException(422, "setup requires an independent new credential")
     created = request.app.state.store.initialize_setup(
         username, "administrator", hashlib.sha256(api_key.encode()).hexdigest(), "0.5.0"
     )
     if not created:
         raise HTTPException(status_code=409, detail="setup already initialized")
-    request.app.state.store.add_audit(username, "setup.initialize", {}, {"role": "administrator"})
+    request.app.state.store.add_audit(
+        str(
+            request.app.state.store.user_by_credential(
+                hashlib.sha256(api_key.encode()).hexdigest()
+            )["id"]
+        ),
+        "setup.initialize",
+        {},
+        {"role": "administrator"},
+        session_id="bootstrap",
+    )
     return {
         "initialized": True,
         "role": "administrator",
-        "message": "Set SENTINEL_API_KEY to the configured bootstrap key.",
+        "message": "Credentials are active. Bootstrap is now disabled.",
     }
 
 
@@ -73,7 +79,14 @@ def create_session(request: Request, login: WebLogin):
     if not manager.enabled:
         raise HTTPException(status_code=404, detail="web 2FA is disabled")
     client = request.client.host if request.client else "unknown"
-    token = manager.login(client, login.api_key, login.totp_code)
+    principal = credential_principal(request.app.state, login.api_key)
+    token = (
+        manager.login(
+            client, login.api_key, login.totp_code, credential_verified=principal is not None
+        )
+        if principal
+        else None
+    )
     if not token:
         raise HTTPException(status_code=401, detail="invalid credentials or rate limited")
     return {"token": token, "expires_in": manager.ttl_seconds}
@@ -92,9 +105,10 @@ def valid_ip(value: str) -> str:
         raise HTTPException(status_code=400, detail="invalid IP address") from None
 
 
-@router.get("/dashboard", response_model=DashboardSummary, dependencies=secured)
+@router.get(
+    "/dashboard", response_model=DashboardSummary, dependencies=[Depends(scoped("incident.read"))]
+)
 def dashboard(request: Request):
-    require_role(request, Role.VIEWER)
     store = request.app.state.store
     profiles = store.profile_summary(500)
     return DashboardSummary(
@@ -111,7 +125,7 @@ def dashboard(request: Request):
     )
 
 
-@router.get("/events", response_model=Page, dependencies=secured)
+@router.get("/events", response_model=Page, dependencies=[Depends(scoped("incident.read"))])
 def events(
     request: Request,
     ip: str | None = None,
@@ -126,13 +140,12 @@ def events(
     )
 
 
-@router.get("/incidents", response_model=Page, dependencies=secured)
+@router.get("/incidents", response_model=Page, dependencies=[Depends(scoped("incident.read"))])
 def incidents(
     request: Request,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0, le=1_000_000),
 ):
-    require_role(request, Role.VIEWER)
     return Page(
         items=request.app.state.store.incidents_paged(limit, offset),
         limit=limit,
@@ -140,7 +153,7 @@ def incidents(
     )
 
 
-@router.get("/incidents/{incident_id}", dependencies=secured)
+@router.get("/incidents/{incident_id}", dependencies=[Depends(scoped("incident.read"))])
 def incident_detail(request: Request, incident_id: str):
     incident = request.app.state.store.incident(incident_id)
     if not incident:
@@ -148,7 +161,7 @@ def incident_detail(request: Request, incident_id: str):
     return incident
 
 
-@router.get("/ai/incident/{incident_id}", dependencies=secured)
+@router.get("/ai/incident/{incident_id}", dependencies=[Depends(scoped("llm.analyze"))])
 async def ai_incident(request: Request, incident_id: str):
     incident = request.app.state.store.incident(incident_id)
     if not incident:
@@ -160,7 +173,7 @@ async def ai_incident(request: Request, incident_id: str):
     return {"incident": incident, "analysis": analysis, "analysis_only": True}
 
 
-@router.get("/incidents/{incident_id}/history", dependencies=secured)
+@router.get("/incidents/{incident_id}/history", dependencies=[Depends(scoped("incident.read"))])
 def incident_history(request: Request, incident_id: str):
     if not request.app.state.store.incident(incident_id):
         raise HTTPException(status_code=404, detail="incident not found")
@@ -170,9 +183,8 @@ def incident_history(request: Request, incident_id: str):
     }
 
 
-@router.patch("/incidents/{incident_id}", dependencies=secured)
+@router.patch("/incidents/{incident_id}", dependencies=[Depends(scoped("incident.write"))])
 def update_incident(request: Request, incident_id: str, update: dict):
-    require_role(request, Role.ANALYST)
     try:
         result = request.app.state.store.update_incident_status(
             incident_id, str(update.get("status", "")), str(update.get("note", ""))
@@ -184,7 +196,7 @@ def update_incident(request: Request, incident_id: str, update: dict):
     return result
 
 
-@router.get("/ip/{ip}", dependencies=secured)
+@router.get("/ip/{ip}", dependencies=[Depends(scoped("incident.read"))])
 def ip_detail(request: Request, ip: str):
     address = valid_ip(ip)
     store = request.app.state.store
@@ -198,9 +210,13 @@ def ip_detail(request: Request, ip: str):
     }
 
 
-@router.get("/config/{name}", dependencies=secured)
+@router.get("/config/export", dependencies=[Depends(scoped("config.export"))])
+def export_config(request: Request):
+    return request.app.state.config_manager.export()
+
+
+@router.get("/config/{name}", dependencies=[Depends(scoped("config.export"))])
 def get_config(request: Request, name: str):
-    require_role(request, Role.ADMINISTRATOR)
     try:
         return {"name": name, "value": request.app.state.config_manager.read(name)}
     except UnknownConfigurationError:
@@ -209,14 +225,13 @@ def get_config(request: Request, name: str):
         raise HTTPException(status_code=422, detail=exc.errors(include_input=False)) from None
 
 
-@router.put("/config/{name}", dependencies=secured)
+@router.put("/config/{name}", dependencies=[Depends(scoped("config.write"))])
 def update_config(request: Request, name: str, update: ConfigUpdate):
-    require_role(request, Role.ADMINISTRATOR)
     before = request.app.state.config_manager.read(name)
     try:
         result = request.app.state.config_manager.update(name, update.value)
-        request.app.state.store.add_audit(
-            request.headers.get("x-sentinel-user", "api"),
+        audit(
+            request,
             f"config.update:{name}",
             before,
             update.value,
@@ -228,7 +243,7 @@ def update_config(request: Request, name: str, update: ConfigUpdate):
         raise HTTPException(status_code=422, detail=exc.errors(include_input=False)) from None
 
 
-@router.get("/threat-intelligence", dependencies=secured)
+@router.get("/threat-intelligence", dependencies=[Depends(scoped("policy.read"))])
 def threat_intelligence(request: Request):
     return {
         "configuration": request.app.state.config_manager.read("intelligence"),
@@ -236,7 +251,7 @@ def threat_intelligence(request: Request):
     }
 
 
-@router.get("/risk-policy", dependencies=secured)
+@router.get("/risk-policy", dependencies=[Depends(scoped("policy.read"))])
 def risk_policy(request: Request):
     return {
         "rules": request.app.state.config_manager.read("rules"),
@@ -244,9 +259,8 @@ def risk_policy(request: Request):
     }
 
 
-@router.get("/policies", dependencies=secured)
+@router.get("/policies", dependencies=[Depends(scoped("policy.read"))])
 def policies(request: Request):
-    require_role(request, Role.ANALYST)
     config = request.app.state.settings.load_policy()
     return {
         "rules": config.rules,
@@ -259,44 +273,35 @@ def policies(request: Request):
     }
 
 
-@router.get("/actions", dependencies=secured)
+@router.get("/actions", dependencies=[Depends(scoped("action.read"))])
 def actions(request: Request, limit: int = Query(100, ge=1, le=500)):
-    require_role(request, Role.ANALYST)
     return {"actions": request.app.state.store.actions(limit)}
 
 
-@router.post("/actions/{action_id}/revoke", dependencies=secured)
+@router.post("/actions/{action_id}/revoke", dependencies=[Depends(scoped("action.execute"))])
 async def revoke_action(request: Request, action_id: int):
-    require_role(request, Role.ANALYST)
-    action = request.app.state.store.actions(1000)
-    selected = next((item for item in action if item["id"] == action_id), None)
-    if not selected:
-        raise HTTPException(status_code=404, detail="action not found")
-    if (
-        not request.app.state.settings.response_dry_run
-        and selected["action"] in {"block", "rate_limit"}
-        and selected["ip"]
-    ):
-        await request.app.state.service.haproxy.unblock(selected["ip"])
-    result = request.app.state.store.revoke_action(action_id)
+    try:
+        result = await request.app.state.service.lifecycle.revoke(action_id)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(502, "rollback not confirmed") from exc
+    if result is None:
+        raise HTTPException(404, "action not found")
+    audit(request, "action.revoke", after={"action_id": action_id})
     return result
 
 
-@router.get("/audit-log", dependencies=secured)
+@router.get("/audit-log", dependencies=[Depends(scoped("audit.read"))])
 def audit_log(request: Request, limit: int = Query(100, ge=1, le=500)):
-    require_role(request, Role.ANALYST)
     return {"entries": request.app.state.store.audit_log(limit)}
 
 
-@router.get("/reports/daily", dependencies=secured)
+@router.get("/reports/daily", dependencies=[Depends(scoped("report.create"))])
 def daily_report(request: Request):
-    require_role(request, Role.ANALYST)
     return request.app.state.store.daily_report()
 
 
-@router.get("/users", dependencies=secured)
+@router.get("/users", dependencies=[Depends(scoped("user.read"))])
 def users(request: Request):
-    require_role(request, Role.ADMINISTRATOR)
     return {
         "roles": [role.value for role in Role],
         "users": request.app.state.store.users(),
@@ -304,37 +309,25 @@ def users(request: Request):
     }
 
 
-@router.get("/config/export", dependencies=secured)
-def export_config(request: Request):
-    require_role(request, Role.ADMINISTRATOR)
-    return request.app.state.config_manager.export()
-
-
-@router.post("/config/backup", dependencies=secured)
+@router.post("/config/backup", dependencies=[Depends(scoped("config.export"))])
 def backup_config(request: Request):
-    require_role(request, Role.ADMINISTRATOR)
     path = request.app.state.config_manager.backup()
-    request.app.state.store.add_audit(
-        request.headers.get("x-sentinel-user", "api"), "config.backup", {}, {"path": str(path)}
-    )
+    audit(request, "config.backup", {}, {"path": str(path)})
     return {"backed_up": True, "path": str(path)}
 
 
-@router.post("/config/import", dependencies=secured)
+@router.post("/config/import", dependencies=[Depends(scoped("config.write"))])
 def import_config(request: Request, payload: dict):
-    require_role(request, Role.ADMINISTRATOR)
     before = request.app.state.config_manager.export()
     try:
         result = request.app.state.config_manager.import_config(payload)
     except (ValueError, ValidationError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    request.app.state.store.add_audit(
-        request.headers.get("x-sentinel-user", "api"), "config.import", before, payload
-    )
+    audit(request, "config.import", before, payload)
     return result
 
 
-@router.post("/policies/test", dependencies=secured)
+@router.post("/policies/test", dependencies=[Depends(scoped("policy.read"))])
 def test_policy(request: Request, payload: dict):
     score = int(payload.get("risk_score", 0))
     context = dict(payload.get("context") or {})
@@ -347,12 +340,12 @@ def test_policy(request: Request, payload: dict):
     return result
 
 
-@router.get("/trusted-entities", dependencies=secured)
+@router.get("/trusted-entities", dependencies=[Depends(scoped("policy.read"))])
 def trusted_entities(request: Request):
     return {"entities": request.app.state.store.trusted_entities()}
 
 
-@router.post("/trusted-entities", dependencies=secured)
+@router.post("/trusted-entities", dependencies=[Depends(scoped("policy.write"))])
 def add_trusted_entity(request: Request, payload: dict):
     entity_type = str(payload.get("entity_type", ""))
     if (
@@ -361,19 +354,21 @@ def add_trusted_entity(request: Request, payload: dict):
         or not payload.get("reason")
     ):
         raise HTTPException(status_code=422, detail="entity_type, value and reason are required")
+    audit(request, "trusted_entity.add", after=payload)
     return request.app.state.store.add_trusted_entity(
         entity_type, str(payload["value"]), str(payload["reason"]), payload.get("expires_at")
     )
 
 
-@router.delete("/trusted-entities/{entity_id}", dependencies=secured)
+@router.delete("/trusted-entities/{entity_id}", dependencies=[Depends(scoped("policy.write"))])
 def disable_trusted_entity(request: Request, entity_id: int):
+    audit(request, "trusted_entity.disable", after={"id": entity_id})
     if not request.app.state.store.disable_trusted_entity(entity_id):
         raise HTTPException(status_code=404, detail="trusted entity not found")
     return {"disabled": True, "id": entity_id}
 
 
-@router.get("/haproxy", dependencies=secured)
+@router.get("/haproxy", dependencies=[Depends(scoped("action.read"))])
 async def haproxy(request: Request):
     runtime = request.app.state.runtime
     settings = request.app.state.settings
@@ -393,7 +388,7 @@ async def haproxy(request: Request):
     return response
 
 
-@router.get("/challenge", dependencies=secured)
+@router.get("/challenge", dependencies=[Depends(scoped("policy.read"))])
 def challenge(request: Request):
     settings = request.app.state.settings
     policy = settings.load_policy()
@@ -405,7 +400,7 @@ def challenge(request: Request):
     }
 
 
-@router.get("/llm", dependencies=secured)
+@router.get("/llm", dependencies=[Depends(scoped("policy.read"))])
 def llm_status(request: Request):
     settings = request.app.state.settings
     return {
@@ -417,7 +412,9 @@ def llm_status(request: Request):
     }
 
 
-@router.get("/services", response_model=ServicesResponse, dependencies=secured)
+@router.get(
+    "/services", response_model=ServicesResponse, dependencies=[Depends(scoped("incident.read"))]
+)
 def services_dashboard(
     request: Request,
     rolling_window_hours: int = Query(24, ge=1, le=168),
@@ -450,7 +447,7 @@ def services_dashboard(
     )
 
 
-@router.get("/integrity", dependencies=secured)
+@router.get("/integrity", dependencies=[Depends(scoped("incident.read"))])
 def integrity(request: Request, limit: int = Query(100, ge=1, le=500), status: str | None = None):
     store = request.app.state.store
     return {
@@ -459,7 +456,7 @@ def integrity(request: Request, limit: int = Query(100, ge=1, le=500), status: s
     }
 
 
-@router.get("/mcp", dependencies=secured)
+@router.get("/mcp", dependencies=[Depends(scoped("incident.read"))])
 def mcp_status(request: Request):
     return {
         "status": "available",
@@ -467,6 +464,8 @@ def mcp_status(request: Request):
     }
 
 
-@router.post("/haproxy/unblock/{ip}", dependencies=secured)
+@router.post("/haproxy/unblock/{ip}", dependencies=[Depends(scoped("action.execute"))])
 async def unblock(request: Request, ip: str):
-    return await request.app.state.service.haproxy.unblock(valid_ip(ip))
+    result = await request.app.state.service.lifecycle.unblock(valid_ip(ip))
+    audit(request, "action.unblock", after={"ip": valid_ip(ip)})
+    return result

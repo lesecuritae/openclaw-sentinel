@@ -1,8 +1,9 @@
 import asyncio
-import secrets
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from core.auth import resolve_principal
 
 router = APIRouter()
 MAX_QUEUE_SIZE = 50
@@ -54,13 +55,8 @@ async def events_websocket(websocket: WebSocket):
         await websocket.close(code=1008)
         return
     supplied = frame.get("token", "") if isinstance(frame, dict) else ""
-    sessions = websocket.app.state.web_sessions
-    expected = websocket.app.state.settings.sentinel_api_key
-    authenticated = (
-        sessions.validate(str(supplied))
-        if sessions.enabled
-        else not expected or secrets.compare_digest(str(supplied), expected)
-    )
+    principal = resolve_principal(websocket.app.state, str(supplied))
+    authenticated = principal is not None
     if not authenticated:
         await websocket.close(code=1008)
         return
@@ -70,7 +66,24 @@ async def events_websocket(websocket: WebSocket):
     try:
         await websocket.send_json({"type": "authenticated"})
         while True:
-            await websocket.send_json(await queue.get())
+            if resolve_principal(websocket.app.state, str(supplied)) is None:
+                await websocket.close(code=1008)
+                break
+            incoming = asyncio.create_task(websocket.receive())
+            outgoing = asyncio.create_task(queue.get())
+            try:
+                done, _ = await asyncio.wait(
+                    {incoming, outgoing}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+                )
+                if incoming in done:
+                    # No client frames are accepted after authentication.
+                    break
+                if outgoing in done:
+                    await websocket.send_json(outgoing.result())
+            finally:
+                incoming.cancel()
+                outgoing.cancel()
+                await asyncio.gather(incoming, outgoing, return_exceptions=True)
     except WebSocketDisconnect:
         pass
     finally:

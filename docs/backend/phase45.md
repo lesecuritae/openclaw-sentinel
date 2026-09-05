@@ -1,3 +1,5 @@
+> Security update: the UDP integration described below is historical and disabled. Use authenticated HTTP collector ingest; see [security operations](security-operations.md).
+
 # Production Integration Layer — Phase 4.5
 
 ## Collector System
