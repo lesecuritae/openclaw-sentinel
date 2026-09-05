@@ -18,6 +18,17 @@ class SecurityTools:
             "security.get_services": {},
             "security.get_integrity": {"status": "string", "limit": "integer"},
             "security.get_integrity_summary": {},
+            "security.get_policies": {},
+            "security.explain_action": {
+                "risk_score": "integer",
+                "event_type": "string",
+                "source": "string",
+            },
+            "security.test_policy": {
+                "risk_score": "integer",
+                "event_type": "string",
+                "source": "string",
+            },
             "security.generate_report": {},
             "security.check_ip_reputation": {"ip": "string"},
             "security.get_threat_sources": {},
@@ -34,6 +45,8 @@ class SecurityTools:
             "security.explain_event": ["event_id"],
             "security.explain_incident": ["incident_id"],
             "security.get_incident_history": ["incident_id"],
+            "security.explain_action": ["risk_score"],
+            "security.test_policy": ["risk_score"],
             "security.check_ip_reputation": ["ip"],
             "security.get_ip_history": ["ip"],
             "security.get_device_profile": ["device_id"],
@@ -150,6 +163,17 @@ class SecurityTools:
             }
         if name == "security.get_integrity_summary":
             return self.store.integrity_summary()
+        if name in {"security.explain_action", "security.test_policy"}:
+            context = {key: args[key] for key in ("event_type", "source") if key in args}
+            return self.service.policy.test(int(args["risk_score"]), context)
+        if name == "security.get_policies":
+            config = self.service.policy.config
+            return {
+                "rules": config.rules,
+                "allow_below": config.allow_below,
+                "challenge_below": config.challenge_below,
+                "require_explicit_block_rule": config.require_explicit_block_rule,
+            }
         if name == "security.generate_report":
             return {"incidents": self.store.incidents(), "profiles": "available per IP"}
         raise KeyError(f"unknown tool: {name}")

@@ -31,6 +31,8 @@ class PolicyConfig(BaseModel):
     block_enabled: bool = True
     challenge_provider: str = "anubis"
     block_provider: str = "haproxy"
+    rules: list[dict[str, object]] = Field(default_factory=list)
+    require_explicit_block_rule: bool = False
 
     @model_validator(mode="after")
     def ordered_thresholds(self):

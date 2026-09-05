@@ -4,3 +4,4 @@ challenge_enabled: false
 block_enabled: true
 challenge_provider: anubis
 block_provider: haproxy
+require_explicit_block_rule: true

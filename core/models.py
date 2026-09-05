@@ -18,8 +18,11 @@ class Severity(StrEnum):
 
 class Action(StrEnum):
     ALLOW = "allow"
+    LOG_ONLY = "log_only"
+    ALERT = "alert"
     CHALLENGE = "challenge"
     BLOCK = "block"
+    RATE_LIMIT = "rate_limit"
 
 
 class IncidentStatus(StrEnum):

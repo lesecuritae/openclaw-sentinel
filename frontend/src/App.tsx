@@ -16,6 +16,7 @@ import LLMPage from "./pages/LLM";
 import MCPPage from "./pages/MCP";
 import ServicesPage from "./pages/Services";
 import SystemIntegrityPage from "./pages/SystemIntegrity";
+import PoliciesPage from "./pages/Policies";
 import { useAuth } from "./lib/auth";
 
 const navItems = [
@@ -31,6 +32,7 @@ const navItems = [
   { to: "/mcp", label: "MCP", icon: Waves },
   { to: "/services", label: "Services", icon: Layers },
   { to: "/integrity", label: "System Integrity", icon: ShieldCheck },
+  { to: "/policies", label: "Policies", icon: Lock },
 ];
 
 export default function App() {
@@ -133,6 +135,7 @@ export default function App() {
             <Route path="/mcp" element={<MCPPage />} />
             <Route path="/services" element={<ServicesPage />} />
             <Route path="/integrity" element={<SystemIntegrityPage />} />
+            <Route path="/policies" element={<PoliciesPage />} />
           </Routes>
         </div>
         <footer className="max-w-6xl mx-auto px-4 md:px-8 py-6 text-xs text-slate-500 border-t border-slate-900">

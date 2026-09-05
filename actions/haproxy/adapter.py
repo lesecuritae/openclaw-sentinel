@@ -8,7 +8,7 @@ class HAProxyActionAdapter:
     def __init__(self, runtime: HAProxyRuntimeClient, blocklist_path: str, enabled: bool = False):
         self.runtime, self.blocklist_path, self.enabled = runtime, blocklist_path, enabled
 
-    async def block(self, ip: str) -> ActionResult:
+    async def block(self, ip: str, expires_at: str | None = None) -> ActionResult:
         address = str(ipaddress.ip_address(ip))
         if not self.enabled:
             return ActionResult(
@@ -16,7 +16,7 @@ class HAProxyActionAdapter:
                 ip=address,
                 provider="haproxy",
                 applied=False,
-                detail="actions disabled",
+                detail=f"actions disabled; expires_at={expires_at or 'none'}",
             )
         response = await self.runtime.command(f"add acl {self.blocklist_path} {address}")
         return ActionResult(
@@ -24,7 +24,7 @@ class HAProxyActionAdapter:
             ip=address,
             provider="haproxy",
             applied=True,
-            detail=response.strip(),
+            detail=f"{response.strip()}; expires_at={expires_at or 'none'}",
         )
 
     async def unblock(self, ip: str) -> ActionResult:

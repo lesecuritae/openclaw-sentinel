@@ -191,6 +191,26 @@ def risk_policy(request: Request):
     }
 
 
+@router.get("/policies", dependencies=secured)
+def policies(request: Request):
+    config = request.app.state.settings.load_policy()
+    return {
+        "rules": config.rules,
+        "thresholds": {
+            "allow_below": config.allow_below,
+            "challenge_below": config.challenge_below,
+        },
+        "require_explicit_block_rule": config.require_explicit_block_rule,
+        "actions": ["log_only", "alert", "anubis_challenge", "haproxy_block", "rate_limit"],
+    }
+
+
+@router.post("/policies/test", dependencies=secured)
+def test_policy(request: Request, payload: dict):
+    score = int(payload.get("risk_score", 0))
+    return request.app.state.service.policy.test(score, payload.get("context"))
+
+
 @router.get("/haproxy", dependencies=secured)
 async def haproxy(request: Request):
     runtime = request.app.state.runtime

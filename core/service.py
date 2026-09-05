@@ -76,7 +76,6 @@ class SentinelService:
             reputation = await self.intelligence.check(event.ip)
         detections = self.detection.evaluate(event, history)
         assessment = self.risk.assess(event.ip, detections, reputation, adaptive_factors)
-        assessment.action = self.policy.decide(assessment)
         self.store.update_event_score(event.event_id, assessment.risk_score)
         self.store.add_anomalies(event, adaptive_factors)
         if assessment.risk_score >= 70 or event.severity.value in {"high", "critical"}:
@@ -92,6 +91,12 @@ class SentinelService:
                     factors=factors,
                     event_id=event.event_id,
                 )
+
+        # Policy is evaluated only after the incident record has captured the
+        # evidence and risk state for this event.
+        assessment.action = self.policy.decide(
+            assessment, {"event_type": event.event_type, "source": event.source}
+        )
 
         if event.ip and not infrastructure_event:
             self.store.update_profile(assessment)
@@ -152,6 +157,14 @@ class SentinelService:
             return await self.haproxy.block(assessment.ip)
         if assessment.action == Action.CHALLENGE:
             return await self.anubis.challenge(assessment.ip)
+        if assessment.action in {Action.LOG_ONLY, Action.ALERT, Action.RATE_LIMIT}:
+            return ActionResult(
+                action=assessment.action,
+                ip=assessment.ip,
+                provider="policy",
+                applied=False,
+                detail="prepared action recorded; adapter not enabled",
+            )
         return ActionResult(action=Action.ALLOW, ip=assessment.ip, provider="policy", applied=True)
 
     async def explain_event(self, event: SecurityEvent, llm) -> str:

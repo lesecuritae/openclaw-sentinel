@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS ip_profile (
 );
 CREATE TABLE IF NOT EXISTS actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, ip TEXT NOT NULL,
-  action TEXT NOT NULL, reason TEXT NOT NULL, provider TEXT NOT NULL, applied INTEGER NOT NULL
+  action TEXT NOT NULL, reason TEXT NOT NULL, provider TEXT NOT NULL, applied INTEGER NOT NULL,
+  expires_at TEXT, policy_rule TEXT
 );
 CREATE TABLE IF NOT EXISTS threat_intelligence (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT NOT NULL, source TEXT NOT NULL,
@@ -102,6 +103,10 @@ class SecurityStore:
 
     @staticmethod
     def _migrate(db: sqlite3.Connection) -> None:
+        action_columns = {row["name"] for row in db.execute("PRAGMA table_info(actions)")}
+        for name in ("expires_at", "policy_rule"):
+            if name not in action_columns:
+                db.execute(f"ALTER TABLE actions ADD COLUMN {name} TEXT")
         event_columns = {row["name"] for row in db.execute("PRAGMA table_info(events)")}
         for name in (
             "path",
